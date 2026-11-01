@@ -154,16 +154,37 @@ type ClientConfig struct {
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
 	DataEncryptionMethod                  int     `toml:"DATA_ENCRYPTION_METHOD"`
 	EncryptionKey                         string  `toml:"ENCRYPTION_KEY"`
-	MinUploadMTU                          int     `toml:"MIN_UPLOAD_MTU"`
-	MinDownloadMTU                        int     `toml:"MIN_DOWNLOAD_MTU"`
-	MaxUploadMTU                          int     `toml:"MAX_UPLOAD_MTU"`
-	MaxDownloadMTU                        int     `toml:"MAX_DOWNLOAD_MTU"`
-	MTUTestRetriesResolvers               int     `toml:"MTU_TEST_RETRIES_RESOLVERS"`
-	MTUTestRetriesLogs                    int     `toml:"MTU_TEST_RETRIES_LOGS"`
-	MTUTestTimeoutResolvers               float64 `toml:"MTU_TEST_TIMEOUT_RESOLVERS"`
-	MTUTestTimeoutLogs                    float64 `toml:"MTU_TEST_TIMEOUT_LOGS"`
-	MTUTestParallelismResolvers           int     `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
-	MTUTestParallelismLogs                int     `toml:"MTU_TEST_PARALLELISM_LOGS"`
+	// Node identity (Nexounel per-node keys). When NODE_KEY_FILE is set,
+	// the key file's content replaces ENCRYPTION_KEY. NODE_ID identifies
+	// the node in logs; the server attributes sessions by the key that
+	// decrypts them, looked up in its node registry.
+	NodeID      string `toml:"NODE_ID"`
+	NodeKeyFile string `toml:"NODE_KEY_FILE"`
+	// CapacityMargin is the multisession safety factor applied to
+	// measured capacity (0, 1]; default 0.95.
+	CapacityMargin float64 `toml:"CAPACITY_MARGIN"`
+	// MultiSessionEnabled turns the per-class multi-session coordinator
+	// on (default) or off (single session, upstream behavior).
+	MultiSessionEnabled bool `toml:"MULTISESSION_ENABLED"`
+	// ForwardRange ("lo-hi") makes a TCP-mode node listen on every port
+	// in the range; each accepted connection's local port is carried to
+	// the server, which dials the same port on its forward target when
+	// the port is inside its FORWARD_PORT_RANGE allowlist.
+	ForwardRange string `toml:"FORWARD_RANGE"`
+	// DisableLocalListeners suppresses the proxy/DNS listeners (used by
+	// per-class session clients whose connections are handed to them by
+	// the multi-session coordinator).
+	DisableLocalListeners       bool    `toml:"DISABLE_LOCAL_LISTENERS"`
+	MinUploadMTU                int     `toml:"MIN_UPLOAD_MTU"`
+	MinDownloadMTU              int     `toml:"MIN_DOWNLOAD_MTU"`
+	MaxUploadMTU                int     `toml:"MAX_UPLOAD_MTU"`
+	MaxDownloadMTU              int     `toml:"MAX_DOWNLOAD_MTU"`
+	MTUTestRetriesResolvers     int     `toml:"MTU_TEST_RETRIES_RESOLVERS"`
+	MTUTestRetriesLogs          int     `toml:"MTU_TEST_RETRIES_LOGS"`
+	MTUTestTimeoutResolvers     float64 `toml:"MTU_TEST_TIMEOUT_RESOLVERS"`
+	MTUTestTimeoutLogs          float64 `toml:"MTU_TEST_TIMEOUT_LOGS"`
+	MTUTestParallelismResolvers int     `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
+	MTUTestParallelismLogs      int     `toml:"MTU_TEST_PARALLELISM_LOGS"`
 	// MTUBackgroundParallelism is how many resolvers the FastConnect background
 	// sweep probes at once, after the starter pool has released the session. The
 	// initial scan keeps using MTUTestParallelism so connecting stays fast; this
@@ -413,6 +434,8 @@ func defaultClientConfig() ClientConfig {
 		CompressionMinSize:              compression.DefaultMinSize,
 		DataEncryptionMethod:            5,
 		EncryptionKey:                   "",
+		CapacityMargin:                  0.95,
+		MultiSessionEnabled:             true,
 		MinUploadMTU:                    100,
 		MinDownloadMTU:                  1000,
 		MaxUploadMTU:                    200,
@@ -528,6 +551,28 @@ func (cfg *ClientConfig) ApplyStartupModeMTU(mode string) {
 	}
 }
 
+// ForwardRangeBounds parses FORWARD_RANGE. ok is false when no range is
+// configured.
+func (cfg ClientConfig) ForwardRangeBounds() (lo, hi int, ok bool, err error) {
+	if strings.TrimSpace(cfg.ForwardRange) == "" {
+		return 0, 0, false, nil
+	}
+	lo, hi, err = ParsePortRange(cfg.ForwardRange)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return lo, hi, true, nil
+}
+
+// EffectiveCapacityMargin returns the configured margin, or the 0.95
+// default when unset.
+func (cfg ClientConfig) EffectiveCapacityMargin() float64 {
+	if cfg.CapacityMargin == 0 {
+		return 0.95
+	}
+	return cfg.CapacityMargin
+}
+
 func loadClientConfigFile(filename string) (ClientConfig, error) {
 	cfg := defaultClientConfig()
 	path, err := filepath.Abs(filename)
@@ -626,6 +671,22 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 
 	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {
 		return cfg, fmt.Errorf("invalid DATA_ENCRYPTION_METHOD: %d (valid: 3, 4, 5 AES-GCM only)", cfg.DataEncryptionMethod)
+	}
+
+	if cfg.NodeID != "" && !validNodeID(cfg.NodeID) {
+		return cfg, fmt.Errorf("invalid NODE_ID %q: must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}", cfg.NodeID)
+	}
+	if cfg.CapacityMargin != 0 && (cfg.CapacityMargin <= 0 || cfg.CapacityMargin > 1) {
+		return cfg, fmt.Errorf("invalid CAPACITY_MARGIN %v: must be in (0, 1]", cfg.CapacityMargin)
+	}
+	if cfg.ForwardRange != "" {
+		lo, hi, err := ParsePortRange(cfg.ForwardRange)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid FORWARD_RANGE: %w", err)
+		}
+		if hi-lo+1 > 1024 {
+			return cfg, fmt.Errorf("invalid FORWARD_RANGE %q: span of %d ports exceeds 1024", cfg.ForwardRange, hi-lo+1)
+		}
 	}
 
 	queryTypeCodes, err := normalizeQueryTypes(cfg.QueryTypes)

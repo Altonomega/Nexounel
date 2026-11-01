@@ -149,7 +149,8 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 		return
 	}
 
-	if s.cfg.ForwardIP == "" || s.cfg.ForwardPort <= 0 {
+	_, _, forwardRanged, _ := s.cfg.ForwardPortRangeBounds()
+	if s.cfg.ForwardIP == "" || (s.cfg.ForwardPort <= 0 && !forwardRanged) {
 		stream := record.getOrCreateStream(vpnPacket.StreamID, s.streamARQConfig(record.DownloadCompression), nil, s.log)
 		if stream == nil || stream.ARQ == nil {
 			record.enqueueOrphanReset(Enums.PACKET_STREAM_RST, vpnPacket.StreamID, 0)
@@ -171,6 +172,31 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 		return
 	}
 
+	// Resolve the dial port: the SYN payload carries the requested port
+	// when FORWARD_PORT_RANGE is configured. Out-of-range, malformed, or
+	// (with an allowlist) unresolvable requests fail closed with no dial.
+	targetPort, targetOK := resolveStreamTargetPort(vpnPacket.Payload, s.cfg)
+	if !targetOK {
+		stream := record.getOrCreateStream(vpnPacket.StreamID, s.streamARQConfig(record.DownloadCompression), nil, s.log)
+		if stream == nil || stream.ARQ == nil {
+			record.enqueueOrphanReset(Enums.PACKET_STREAM_RST, vpnPacket.StreamID, 0)
+			return
+		}
+		stream.ARQ.SendControlPacketWithTTL(
+			Enums.PACKET_STREAM_CONNECT_FAIL,
+			vpnPacket.SequenceNum,
+			0,
+			0,
+			nil,
+			Enums.DefaultPacketPriority(Enums.PACKET_STREAM_CONNECT_FAIL),
+			true,
+			nil,
+			s.cfg.StreamFailurePacketTTL(),
+		)
+		s.finalizeDeferredConnectStream(vpnPacket.SessionID, vpnPacket.StreamID, "stream", "forward-port-rejected")
+		return
+	}
+
 	stream := record.getOrCreateStream(vpnPacket.StreamID, s.streamARQConfig(record.DownloadCompression), nil, s.log)
 	if stream == nil || stream.ARQ == nil {
 		record.enqueueOrphanReset(Enums.PACKET_STREAM_RST, vpnPacket.StreamID, 0)
@@ -179,7 +205,7 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 	s.maybeEnableStreamFEC(stream)
 
 	stream.mu.RLock()
-	alreadyConnected := stream.Connected && stream.TargetHost == s.cfg.ForwardIP && stream.TargetPort == uint16(s.cfg.ForwardPort)
+	alreadyConnected := stream.Connected && stream.TargetHost == s.cfg.ForwardIP && stream.TargetPort == uint16(targetPort)
 	stream.mu.RUnlock()
 	if alreadyConnected {
 		stream.ARQ.SendControlPacketWithTTL(
@@ -205,7 +231,7 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 	attemptCtx, cancelAttempt := context.WithTimeout(ctx, attemptTimeout)
 	defer cancelAttempt()
 
-	upstreamConn, err := s.dialTCPTargetContext(attemptCtx, net.JoinHostPort(s.cfg.ForwardIP, strconv.Itoa(s.cfg.ForwardPort)))
+	upstreamConn, err := s.dialTCPTargetContext(attemptCtx, net.JoinHostPort(s.cfg.ForwardIP, strconv.Itoa(targetPort)))
 
 	if err != nil {
 		timedOut := errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
@@ -254,7 +280,7 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 		return
 	}
 
-	if record.isClosed() || !stream.attachUpstreamConn(upstreamConn, s.cfg.ForwardIP, uint16(s.cfg.ForwardPort), "CONNECTED") {
+	if record.isClosed() || !stream.attachUpstreamConn(upstreamConn, s.cfg.ForwardIP, uint16(targetPort), "CONNECTED") {
 		_ = upstreamConn.Close()
 		s.finalizeDeferredConnectStream(vpnPacket.SessionID, vpnPacket.StreamID, "stream", "attach-rejected")
 		return

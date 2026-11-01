@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -340,6 +341,24 @@ type Connection struct {
 	Backup bool
 }
 
+// resolveClientEncryptionKey returns the codec key for a client config.
+// A per-node key file (NODE_KEY_FILE) takes precedence over the shared
+// ENCRYPTION_KEY value; the file's trimmed content is the key.
+func resolveClientEncryptionKey(cfg config.ClientConfig) (string, error) {
+	if strings.TrimSpace(cfg.NodeKeyFile) == "" {
+		return cfg.EncryptionKey, nil
+	}
+	data, err := os.ReadFile(cfg.NodeKeyFile)
+	if err != nil {
+		return "", fmt.Errorf("read NODE_KEY_FILE %s: %w", cfg.NodeKeyFile, err)
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return "", fmt.Errorf("NODE_KEY_FILE %s is empty", cfg.NodeKeyFile)
+	}
+	return key, nil
+}
+
 // Bootstrap initializes a new Client by loading configuration, setting up logging,
 // and preparing the connection map.
 func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Client, error) {
@@ -350,8 +369,15 @@ func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Clie
 	cfg.ApplyStartupModeMTU("resolvers")
 
 	log := logger.New("CottenDns Client", cfg.LogLevel)
+	if cfg.NodeID != "" {
+		log.Infof("Node ID: <cyan>%s</cyan>", cfg.NodeID)
+	}
 
-	codec, err := security.NewCodec(cfg.DataEncryptionMethod, cfg.EncryptionKey)
+	key, err := resolveClientEncryptionKey(cfg)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := security.NewCodec(cfg.DataEncryptionMethod, key)
 	if err != nil {
 		return nil, fmt.Errorf("client codec setup failed: %w", err)
 	}
@@ -399,8 +425,15 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 	cfg.ApplyStartupModeMTU("logs")
 
 	log := logger.New("CottenDns Client", cfg.LogLevel)
+	if cfg.NodeID != "" {
+		log.Infof("Node ID: <cyan>%s</cyan>", cfg.NodeID)
+	}
 
-	codec, err := security.NewCodec(cfg.DataEncryptionMethod, cfg.EncryptionKey)
+	key, err := resolveClientEncryptionKey(cfg)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := security.NewCodec(cfg.DataEncryptionMethod, key)
 	if err != nil {
 		return nil, fmt.Errorf("client codec setup failed: %w", err)
 	}

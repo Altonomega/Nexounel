@@ -359,15 +359,27 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 	c.log.Infof("\U0001F4E1 <cyan>Async Runtime Initialized: <green>%d RX/TX Workers</green>, <green>%d Processors</green></cyan>",
 		c.tunnelRX_TX_Workers, c.tunnelProcessWorkers)
 
-	// Start TCP/SOCKS Proxy Listener
-	c.tcpListener = NewTCPListener(c, c.cfg.ProtocolType)
-	if err := c.tcpListener.Start(runtimeCtx, c.cfg.ListenIP, c.cfg.ListenPort); err != nil {
-		c.log.Errorf("<red>❌ Failed to start %s proxy: %v</red>", c.cfg.ProtocolType, err)
-		return err
+	// Start TCP/SOCKS Proxy Listener, unless the coordinator owns the
+	// listeners (DisableLocalListeners) and hands connections in
+	// directly via HandleTCPConnect.
+	if !c.cfg.DisableLocalListeners {
+		c.tcpListener = NewTCPListener(c, c.cfg.ProtocolType)
+		var err error
+		if lo, hi, ranged, rangeErr := c.cfg.ForwardRangeBounds(); ranged && rangeErr == nil && c.cfg.ProtocolType == "TCP" {
+			err = c.tcpListener.StartRange(runtimeCtx, c.cfg.ListenIP, lo, hi)
+		} else if rangeErr != nil {
+			err = rangeErr
+		} else {
+			err = c.tcpListener.Start(runtimeCtx, c.cfg.ListenIP, c.cfg.ListenPort)
+		}
+		if err != nil {
+			c.log.Errorf("<red>❌ Failed to start %s proxy: %v</red>", c.cfg.ProtocolType, err)
+			return err
+		}
 	}
 
 	// Start DNS Listener if enabled
-	if c.cfg.LocalDNSEnabled {
+	if c.cfg.LocalDNSEnabled && !c.cfg.DisableLocalListeners {
 		c.dnsListener = NewDNSListener(c)
 		if err := c.dnsListener.Start(runtimeCtx, c.cfg.LocalDNSIP, c.cfg.LocalDNSPort); err != nil {
 			c.log.Errorf("<red>❌ Failed to start DNS resolver: %v</red>", err)

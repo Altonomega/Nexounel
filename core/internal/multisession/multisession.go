@@ -44,7 +44,9 @@ const HysteresisDivisor = 8
 // for resolvers that failed probing; they are never discarded, only
 // held as reserves.
 type ProbeResult struct {
-	Resolver    string
+	Resolver string
+	// Port is the resolver's UDP port (usually 53).
+	Port        int
 	UploadMTU   int
 	DownloadMTU int
 	Loss        float64

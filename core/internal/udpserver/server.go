@@ -51,7 +51,11 @@ type Server struct {
 	cfg                      config.ServerConfig
 	log                      *logger.Logger
 	codec                    *security.Codec
-	codecs                   []*security.Codec  // exactly one codec: the configured AES-GCM method
+	codecs                   []*security.Codec  // one codec: the configured method, or one per registry node
+	// nodeIDs parallels codecs when the server runs in node-registry
+	// mode: nodeIDs[i] is the registry ID whose key built codecs[i].
+	// Empty in single shared-key mode.
+	nodeIDs                  []string
 	preferredCodec           atomic.Int32       // index into codecs to try first
 	codecAccepted            [6]atomic.Uint64   // successful ingress frames by encryption method
 	ingressReplay            ingressReplayCache // authenticated requests already dispatched
@@ -431,6 +435,44 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 	srv.sessions.setClientMTUCeilings(cfg.MaxAllowedClientUploadMTU, cfg.MaxAllowedClientDownloadMTU)
 
 	return srv
+}
+
+// SetNodeCodecs switches the server to node-registry mode: one codec per
+// registry node, in registry order, with the parallel node IDs used to
+// attribute sessions to the node whose key decrypted the session init.
+// Ingress trial (preferredCodec first) is unchanged; a frame that no
+// registry key authenticates is answered with no data, exactly as a
+// wrong-key frame is in single-key mode.
+//
+// Mismatched or empty arguments are rejected without touching the
+// existing codec set (fail closed on the current configuration).
+// Call before Run; it is not safe to call concurrently with traffic.
+func (s *Server) SetNodeCodecs(codecs []*security.Codec, nodeIDs []string) {
+	if s == nil || len(codecs) == 0 || len(codecs) != len(nodeIDs) {
+		return
+	}
+	for _, codec := range codecs {
+		if codec == nil {
+			return
+		}
+	}
+	s.codecs = codecs
+	s.nodeIDs = append([]string(nil), nodeIDs...)
+	s.preferredCodec.Store(0)
+}
+
+// nodeIDForCodec returns the registry ID attributed to a session codec,
+// or "" in single shared-key mode (or when the codec is not in the set).
+func (s *Server) nodeIDForCodec(codec *security.Codec) string {
+	if s == nil || codec == nil {
+		return ""
+	}
+	for i, c := range s.codecs {
+		if c == codec && i < len(s.nodeIDs) {
+			return s.nodeIDs[i]
+		}
+	}
+	return ""
 }
 
 type throttledLogState struct {

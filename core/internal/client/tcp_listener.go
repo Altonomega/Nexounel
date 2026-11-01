@@ -69,48 +69,91 @@ func (l *TCPListener) Start(ctx context.Context, ip string, port int) error {
 			l.client.log.Infof("🚀 <green>%s Proxy server is listening on <cyan>%s</cyan></green>", l.protocolType, listener.Addr().String())
 		}
 
-		go func(activeListener net.Listener) {
-			for {
-				conn, err := activeListener.Accept()
-				if err != nil {
-					if errors.Is(err, net.ErrClosed) {
-						return
-					}
-					select {
-					case <-l.stopChan:
-						return
-					case <-ctx.Done():
-						return
-					default:
-						if listenerShouldRetryAccept(err) {
-							time.Sleep(100 * time.Millisecond)
-							continue
-						}
-						if l.client != nil && l.client.log != nil {
-							l.client.log.Debugf("⚠️ <yellow>%s listener stopped after accept error: %v</yellow>", l.protocolType, err)
-						}
-						return
-					}
-				}
-				go l.handleConnection(ctx, conn, l.protocolType)
-			}
-		}(listener)
+		go l.serveListener(ctx, listener)
 	}
 
-	if l.client != nil && l.client.log != nil {
-		actualPort := port
-		if len(listeners) > 0 {
-			if localAddr, ok := listeners[0].Addr().(*net.TCPAddr); ok && localAddr != nil && localAddr.Port > 0 {
-				actualPort = localAddr.Port
-			}
-		}
-
-		if hint := netutil.FormatListenHint(ip, actualPort); hint != "" {
-			l.client.log.Infof("🌐 <green>%s Proxy %s</green>", l.protocolType, hint)
-		}
-	}
-
+	l.logListenHint(ip, port, listeners)
 	return nil
+}
+
+// StartRange binds one listener per port in [lo, hi] on the same bind IP
+// and serves them all with the shared accept loop. It is used for
+// TCP-forward port ranges (FORWARD_RANGE): the accepted connection's
+// local port is the requested forward port (see HandleTCPConnect).
+// Ports that fail to bind are skipped with a debug log; binding none
+// at all is an error.
+func (l *TCPListener) StartRange(ctx context.Context, ip string, lo, hi int) error {
+	if lo < 1 || hi > 65535 || hi < lo {
+		return fmt.Errorf("invalid listener port range %d-%d", lo, hi)
+	}
+	var listeners []net.Listener
+	for port := lo; port <= hi; port++ {
+		for _, addr := range listenerAddressesForBind(ip, port) {
+			listener, err := net.Listen("tcp", addr)
+			if err != nil {
+				if l.client != nil && l.client.log != nil {
+					l.client.log.Debugf("Skipping listener bind on %s: %v", addr, err)
+				}
+				continue
+			}
+			listeners = append(listeners, listener)
+		}
+	}
+	if len(listeners) == 0 {
+		return fmt.Errorf("failed to bind any proxy listener in range %d-%d", lo, hi)
+	}
+	l.listeners = listeners
+	for _, listener := range listeners {
+		if l.client != nil && l.client.log != nil {
+			l.client.log.Infof("🚀 <green>%s Proxy server is listening on <cyan>%s</cyan></green>", l.protocolType, listener.Addr().String())
+		}
+		go l.serveListener(ctx, listener)
+	}
+	l.logListenHint(ip, lo, listeners)
+	return nil
+}
+
+// serveListener is the shared accept loop for one bound listener.
+func (l *TCPListener) serveListener(ctx context.Context, activeListener net.Listener) {
+	for {
+		conn, err := activeListener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			select {
+			case <-l.stopChan:
+				return
+			case <-ctx.Done():
+				return
+			default:
+				if listenerShouldRetryAccept(err) {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				if l.client != nil && l.client.log != nil {
+					l.client.log.Debugf("⚠️ <yellow>%s listener stopped after accept error: %v</yellow>", l.protocolType, err)
+				}
+				return
+			}
+		}
+		go l.handleConnection(ctx, conn, l.protocolType)
+	}
+}
+
+func (l *TCPListener) logListenHint(ip string, port int, listeners []net.Listener) {
+	if l.client == nil || l.client.log == nil {
+		return
+	}
+	actualPort := port
+	if len(listeners) > 0 {
+		if localAddr, ok := listeners[0].Addr().(*net.TCPAddr); ok && localAddr != nil && localAddr.Port > 0 {
+			actualPort = localAddr.Port
+		}
+	}
+	if hint := netutil.FormatListenHint(ip, actualPort); hint != "" {
+		l.client.log.Infof("🌐 <green>%s Proxy %s</green>", l.protocolType, hint)
+	}
 }
 
 func (l *TCPListener) Stop() {

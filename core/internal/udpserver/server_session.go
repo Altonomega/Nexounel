@@ -939,11 +939,15 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
 		}
 	}
 	record.streamCleanup = s.cleanupStreamArtifacts
+	if nodeID := s.nodeIDForCodec(record.Codec); nodeID != "" {
+		record.NodeID = nodeID
+	}
 
 	if !reused && s.log != nil {
 		s.log.Infof(
-			"\U0001F9DD <green>Session Created, ID: <cyan>%d</cyan>, Mode: <cyan>%s</cyan>, Upload Compression: <cyan>%s</cyan>, Download Compression: <cyan>%s</cyan>, Client Upload MTU: <cyan>%d</cyan>, Client Download MTU: <cyan>%d</cyan>, Max Packed Blocks: <cyan>%d</cyan></green>",
+			"\U0001F9DD <green>Session Created, ID: <cyan>%d</cyan>, Node: <cyan>%s</cyan>, Mode: <cyan>%s</cyan>, Upload Compression: <cyan>%s</cyan>, Download Compression: <cyan>%s</cyan>, Client Upload MTU: <cyan>%d</cyan>, Client Download MTU: <cyan>%d</cyan>, Max Packed Blocks: <cyan>%d</cyan></green>",
 			record.ID,
+			record.NodeID,
 			sessionResponseModeName(record.ResponseMode),
 			compression.TypeName(record.UploadCompression),
 			compression.TypeName(record.DownloadCompression),

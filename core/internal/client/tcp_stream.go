@@ -51,12 +51,26 @@ func (c *Client) HandleTCPConnect(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	// In TCP-forward range mode the accepted connection's local port is
+	// the requested forward port. Carry it in the STREAM_SYN payload as
+	// a 2-byte big-endian port; the server dials that port when it is
+	// inside its FORWARD_PORT_RANGE allowlist. An empty payload keeps
+	// the legacy behavior (fixed FORWARD_IP:FORWARD_PORT).
+	var synPayload []byte
+	if conn != nil {
+		if _, _, ranged, _ := c.cfg.ForwardRangeBounds(); ranged {
+			if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok && tcpAddr != nil && tcpAddr.Port > 0 {
+				synPayload = []byte{byte(tcpAddr.Port >> 8), byte(tcpAddr.Port)}
+			}
+		}
+	}
+
 	arqObj.SendControlPacketWithTTL(
 		Enums.PACKET_STREAM_SYN,
 		0,
 		0,
 		0,
-		nil,
+		synPayload,
 		Enums.DefaultPacketPriority(Enums.PACKET_STREAM_SYN),
 		true,
 		nil,

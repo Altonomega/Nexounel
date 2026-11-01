@@ -44,7 +44,10 @@ const (
 
 type sessionRecord struct {
 	Codec *security.Codec
-	mu    sync.RWMutex
+	// NodeID is the registry ID of the node whose key opened this
+	// session ("" in single shared-key mode).
+	NodeID string
+	mu     sync.RWMutex
 
 	ID uint16
 	// LegacySessionID records that this session was opened by a client of the

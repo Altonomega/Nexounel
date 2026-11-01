@@ -214,9 +214,17 @@ type ServerConfig struct {
 	SupportedUploadCompressionTypes   []int    `toml:"SUPPORTED_UPLOAD_COMPRESSION_TYPES"`
 	SupportedDownloadCompressionTypes []int    `toml:"SUPPORTED_DOWNLOAD_COMPRESSION_TYPES"`
 	DataEncryptionMethod              int      `toml:"DATA_ENCRYPTION_METHOD"`
-	ARecordDataDelivery               bool     `toml:"A_RECORD_DATA_DELIVERY"`
-	AAAARecordDataDelivery            bool     `toml:"AAAA_RECORD_DATA_DELIVERY"`
-	EncryptionKeyFile                 string   `toml:"ENCRYPTION_KEY_FILE"`
+	// NodeRegistryFile enables per-node-key mode: the server builds one
+	// codec per registry entry and attributes sessions by the key that
+	// decrypts them. Unset = single shared key via ENCRYPTION_KEY_FILE.
+	NodeRegistryFile string `toml:"NODE_REGISTRY_FILE"`
+	// ForwardPortRange ("lo-hi") is the allowlist of target ports a
+	// client may request in a TCP-forward STREAM_SYN payload. Empty =
+	// legacy behavior: every stream goes to FORWARD_IP:FORWARD_PORT.
+	ForwardPortRange       string `toml:"FORWARD_PORT_RANGE"`
+	ARecordDataDelivery    bool   `toml:"A_RECORD_DATA_DELIVERY"`
+	AAAARecordDataDelivery bool   `toml:"AAAA_RECORD_DATA_DELIVERY"`
+	EncryptionKeyFile      string `toml:"ENCRYPTION_KEY_FILE"`
 	// FEC (forward error correction) on the download path (tier 2 loss reducer).
 	// Opt-in; when enabled the server encodes outgoing STREAM_DATA into
 	// Reed-Solomon blocks (FECBlockSize data + FECParity recovery shards) so the
@@ -660,6 +668,12 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 		return cfg, fmt.Errorf("invalid FORWARD_PORT: %d", cfg.ForwardPort)
 	}
 
+	if cfg.ForwardPortRange != "" {
+		if _, _, err := ParsePortRange(cfg.ForwardPortRange); err != nil {
+			return cfg, fmt.Errorf("invalid FORWARD_PORT_RANGE: %w", err)
+		}
+	}
+
 	if len(cfg.SOCKS5User) > 255 {
 		return cfg, fmt.Errorf("SOCKS5_USER cannot exceed 255 bytes")
 	}
@@ -853,6 +867,19 @@ func (c ServerConfig) StreamResultPacketTTL() time.Duration {
 
 func (c ServerConfig) StreamFailurePacketTTL() time.Duration {
 	return time.Duration(c.StreamFailurePacketTTLSeconds * float64(time.Second))
+}
+
+// ForwardPortRangeBounds parses FORWARD_PORT_RANGE. ok is false when no
+// allowlist is configured.
+func (c ServerConfig) ForwardPortRangeBounds() (lo, hi int, ok bool, err error) {
+	if strings.TrimSpace(c.ForwardPortRange) == "" {
+		return 0, 0, false, nil
+	}
+	lo, hi, err = ParsePortRange(c.ForwardPortRange)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return lo, hi, true, nil
 }
 
 func (c ServerConfig) EncryptionKeyPath() string {
