@@ -1617,9 +1617,9 @@ func computeSafeUploadMTU(uploadMTU int, cryptoOverhead int) int {
 }
 
 func mtuCryptoOverhead(method int) int {
+	// Only AES-GCM methods (3, 4, 5) reach here: config validation rejects
+	// all others. Every AEAD frame carries a 12-byte nonce + 16-byte tag.
 	switch method {
-	case 2:
-		return 16
 	case 3, 4, 5:
 		return 28
 	default:

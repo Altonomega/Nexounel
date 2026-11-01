@@ -11,6 +11,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ PROTOCOL_TYPE = "socks5"
 DOMAINS = ["V.Domain.com", "v.domain.com."]
 RESOLVER_BALANCING_STRATEGY = 2
 BASE_ENCODE_DATA = true
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 MIN_UPLOAD_MTU = 70
 MIN_DOWNLOAD_MTU = 150
@@ -100,7 +101,7 @@ func TestLoadClientConfigRejectsInvalidProtocol(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "udp"
 DOMAINS = ["v.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
@@ -124,7 +125,7 @@ func TestLoadClientConfigRejectsInvalidResolverBalancingStrategy(t *testing.T) {
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["v.domain.com"]
 RESOLVER_BALANCING_STRATEGY = 8
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
@@ -160,7 +161,7 @@ MTU_TEST_PARALLELISM_RESOLVERS = 0
 MTU_TEST_RETRIES_LOGS = 0
 MTU_TEST_TIMEOUT_LOGS = 0
 MTU_TEST_PARALLELISM_LOGS = 0
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
@@ -257,7 +258,7 @@ DOMAINS = ["v.domain.com"]
 SOCKS5_AUTH = true
 SOCKS5_USER = "user_only"
 SOCKS5_PASS = ""
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
@@ -285,7 +286,7 @@ func TestLoadClientConfigAllowsShortAutoDisableWindowForQuickTesting(t *testing.
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["v.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 AUTO_DISABLE_TIMEOUT_SERVERS = true
 AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS = 3.0
@@ -320,7 +321,7 @@ func TestLoadClientConfigUsesMergedRX_TX_Workers(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["v.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 RX_TX_WORKERS = 9
 TUNNEL_PROCESS_WORKERS = 2
@@ -353,7 +354,7 @@ func TestLoadClientConfigFallsBackToLegacyReaderWriterWorkers(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["v.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 TUNNEL_READER_WORKERS = 3
 TUNNEL_WRITER_WORKERS = 9
@@ -388,7 +389,7 @@ func TestLoadClientConfigWithOverridesReplacesResolversDomainsAndMTURange(t *tes
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["config.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 MIN_UPLOAD_MTU = 40
 MAX_UPLOAD_MTU = 64
@@ -445,7 +446,7 @@ func TestLoadClientConfigWithOverridesAppliesConfigPreset(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`
 PROTOCOL_TYPE = "SOCKS5"
 DOMAINS = ["v.domain.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 ENCRYPTION_KEY = "secret"
 RESOLVER_TRANSPORT = "auto"
 `), 0o644); err != nil {
@@ -526,6 +527,20 @@ func TestMTUBackgroundParallelismDefaultAndClamp(t *testing.T) {
 		got := clampInt(defaultIntBelow(cfg.MTUBackgroundParallelism, 1, 1), 1, 100)
 		if got != tc.want {
 			t.Fatalf("clamp(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestClientConfigRejectsLegacyEncryptionMethods(t *testing.T) {
+	for _, method := range []int{0, 1, 2} {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "client_config.toml")
+		content := "PROTOCOL_TYPE = \"socks5\"\nDOMAINS = [\"v.domain.com\"]\nDATA_ENCRYPTION_METHOD = " + strconv.Itoa(method) + "\nENCRYPTION_KEY = \"secret\"\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadClientConfig(configPath); err == nil {
+			t.Fatalf("DATA_ENCRYPTION_METHOD = %d must be rejected, not normalized", method)
 		}
 	}
 }

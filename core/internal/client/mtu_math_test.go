@@ -20,7 +20,10 @@ func TestEncodedCharsForPayloadUsesWorstCaseUploadPacketType(t *testing.T) {
 func TestEncodedCharsForPayloadMatchesMaxUploadProbeCapacityModel(t *testing.T) {
 	c := createTestClient(t)
 
-	payloadLen := 120
+	// 80 bytes leaves room for the AEAD overhead (28 bytes) plus packet
+	// headers inside the 253-octet QNAME budget; 120 no longer fits once
+	// encryption is mandatory.
+	payloadLen := 80
 	if !c.canBuildUploadPayload("example.com", payloadLen) {
 		t.Fatalf("expected payload length %d to fit generated upload MTU question", payloadLen)
 	}

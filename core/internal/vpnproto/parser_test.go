@@ -139,7 +139,7 @@ func TestParseAcceptsSinglePacketFragmentInfo(t *testing.T) {
 }
 
 func TestParseFromLabels(t *testing.T) {
-	codec, err := security.NewCodec(0, "")
+	codec, err := security.NewCodec(5, "parser-test-key")
 	if err != nil {
 		t.Fatalf("NewCodec returned error: %v", err)
 	}

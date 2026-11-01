@@ -8,7 +8,7 @@ import (
 )
 
 func TestDownstreamDirectionAndOverhead(t *testing.T) {
-	for method := 1; method <= 5; method++ {
+	for method := 3; method <= 5; method++ {
 		t.Run(fmt.Sprint(method), func(t *testing.T) {
 			sender, _ := NewCodec(method, "shared downstream test key")
 			receiver, _ := NewCodec(method, "shared downstream test key")

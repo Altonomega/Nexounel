@@ -55,15 +55,12 @@ func ParseInflatedFromLabels(labels string, codec *security.Codec) (Packet, erro
 
 // ParseInflatedFromLabelsAny decodes the upstream tunnel labels by trying each
 // codec, beginning at startIdx and wrapping through the rest, and returns the
-// first valid packet together with the index of the codec that succeeded. This
-// supports server-side encryption-method auto-detection: the frame is fully
-// encrypted, so the method is discovered by trial, with frame-structure
-// validation in Parse as the success signal. Callers should pass the
-// last-successful index as startIdx so the steady state costs one attempt.
-//
-// Authenticated (AES-GCM) methods fail cleanly on a wrong key/method; for
-// unauthenticated methods (None/XOR/ChaCha20) the header validation in Parse is
-// what rejects a wrong-method guess.
+// first valid packet together with the index of the codec that succeeded. In
+// Nexounel the server passes exactly one codec — the configured AES-GCM
+// method — so this is a single authenticated attempt: a frame encrypted with
+// any other method fails Open here and is rejected. The trial-order machinery
+// is retained only because the codec set is a slice; no method negotiation or
+// auto-detection takes place.
 func ParseInflatedFromLabelsAny(labels string, codecs []*security.Codec, startIdx int) (Packet, int, error) {
 	packet, idx, err := ParseFromLabelsAny(labels, codecs, startIdx)
 	if err != nil {

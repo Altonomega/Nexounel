@@ -411,7 +411,7 @@ func defaultClientConfig() ClientConfig {
 		UploadCompressionType:           2,
 		DownloadCompressionType:         2,
 		CompressionMinSize:              compression.DefaultMinSize,
-		DataEncryptionMethod:            1,
+		DataEncryptionMethod:            5,
 		EncryptionKey:                   "",
 		MinUploadMTU:                    100,
 		MinDownloadMTU:                  1000,
@@ -624,8 +624,8 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		return cfg, fmt.Errorf("invalid PROTOCOL_TYPE: %q (valid: SOCKS5, HTTP, TCP)", cfg.ProtocolType)
 	}
 
-	if cfg.DataEncryptionMethod < 0 || cfg.DataEncryptionMethod > 5 {
-		return cfg, fmt.Errorf("invalid DATA_ENCRYPTION_METHOD: %d", cfg.DataEncryptionMethod)
+	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {
+		return cfg, fmt.Errorf("invalid DATA_ENCRYPTION_METHOD: %d (valid: 3, 4, 5 AES-GCM only)", cfg.DataEncryptionMethod)
 	}
 
 	queryTypeCodes, err := normalizeQueryTypes(cfg.QueryTypes)

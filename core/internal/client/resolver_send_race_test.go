@@ -121,7 +121,7 @@ func TestSessionInitCancellationClosesPendingUDPExchange(t *testing.T) {
 				keys = append(keys, "b")
 			}
 			c := buildTestClientWithResolvers(config.ClientConfig{SessionInitRacingCount: racers}, keys...)
-			c.codec, _ = security.NewCodec(0, "")
+			c.codec, _ = security.NewCodec(5, "resolver-send-test-key")
 			c.mtuTestTimeout = 10 * time.Second
 			c.syncedUploadMTU, c.syncedDownloadMTU = 100, 200
 			for i := range c.connections {

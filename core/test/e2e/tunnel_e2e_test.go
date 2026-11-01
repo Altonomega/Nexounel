@@ -166,14 +166,7 @@ func startEchoServer(t *testing.T) int {
 
 func TestTunnelEndToEndEcho(t *testing.T) {
 	// Matched encryption method on both sides (baseline + A1/A2/A6 coverage).
-	runTunnelEcho(t, 1, 1, "", "", "")
-}
-
-func TestTunnelEndToEndEncryptionAutoDetect(t *testing.T) {
-	// Server configured for method 1 (XOR); client uses method 3 (AES-128-GCM)
-	// with the same shared key. The tunnel must still come up, proving the
-	// server auto-detects the client's encryption method.
-	runTunnelEcho(t, 1, 3, "", "", "")
+	runTunnelEcho(t, 5, 5, "", "", "")
 }
 
 func TestTunnelEndToEndFECDownload(t *testing.T) {
@@ -181,7 +174,7 @@ func TestTunnelEndToEndFECDownload(t *testing.T) {
 	// STREAM_DATA. The payload must still round-trip byte-for-byte, proving the
 	// server's FEC encode path and the client's decode/replay path are wired
 	// correctly end-to-end through the real wire framing.
-	runTunnelEcho(t, 1, 1, "FEC_DOWNLOAD_ENABLED = true\nFEC_BLOCK_SIZE = 4\nFEC_PARITY = 4\n", "", "")
+	runTunnelEcho(t, 5, 5, "FEC_DOWNLOAD_ENABLED = true\nFEC_BLOCK_SIZE = 4\nFEC_PARITY = 4\n", "", "")
 }
 
 // Each carrier must work alone; rotation must not hide a broken record type.
@@ -198,24 +191,24 @@ func TestTunnelEndToEndNewTransportChannels(t *testing.T) {
 	// CNAME). The server must auto-accept every query type and answer with the
 	// matching RR type, with no server-side channel configuration. A byte-exact
 	// echo proves the new channels are wired end-to-end and default-accepted.
-	runTunnelEcho(t, 1, 1, "", `["TXT", "CNAME", "NULL", "HTTPS"]`, "")
+	runTunnelEcho(t, 5, 5, "", `["TXT", "CNAME", "NULL", "HTTPS"]`, "")
 }
 
 func TestTunnelEndToEndTCPTransport(t *testing.T) {
 	// Force the client onto DNS-over-TCP/53. The server's TCP listener (default
 	// on) must serve the entire tunnel — probe, session init, and data plane —
 	// and echo 64 KB byte-for-byte, proving the TCP fallback works end to end.
-	runTunnelEcho(t, 1, 1, "", "", "RESOLVER_TRANSPORT = \"tcp\"\n")
+	runTunnelEcho(t, 5, 5, "", "", "RESOLVER_TRANSPORT = \"tcp\"\n")
 }
 
 func TestTunnelEndToEndIPv6UDPTransport(t *testing.T) {
 	requireIPv6Loopback(t)
-	runTunnelEchoOnDNSHost(t, 1, 1, "", "", "RESOLVER_IP_MODE = \"ipv6\"\n", "::1")
+	runTunnelEchoOnDNSHost(t, 5, 5, "", "", "RESOLVER_IP_MODE = \"ipv6\"\n", "::1")
 }
 
 func TestTunnelEndToEndIPv6TCPTransport(t *testing.T) {
 	requireIPv6Loopback(t)
-	runTunnelEchoOnDNSHost(t, 1, 1, "", "",
+	runTunnelEchoOnDNSHost(t, 5, 5, "", "",
 		"RESOLVER_IP_MODE = \"ipv6\"\nRESOLVER_TRANSPORT = \"tcp\"\n", "::1")
 }
 
@@ -224,7 +217,7 @@ func TestTunnelEndToEndAutoIPv4ToIPv6Fallback(t *testing.T) {
 	// The server only binds ::1. Auto mode must try the preferred IPv4 entry,
 	// reject it as unhealthy, and establish the tunnel through the supplied
 	// IPv6 resolver without requiring a restart or configuration change.
-	runTunnelEchoOnDNSHost(t, 1, 1, "", "", "RESOLVER_IP_MODE = \"auto\"\n",
+	runTunnelEchoOnDNSHost(t, 5, 5, "", "", "RESOLVER_IP_MODE = \"auto\"\n",
 		"::1", "127.0.0.1", "::1")
 }
 
@@ -233,7 +226,7 @@ func TestTunnelEndToEndTCPWithNonTXTChannels(t *testing.T) {
 	// channels (NULL, HTTPS) together. The client rotates query types over TCP;
 	// the server must answer each with the matching record type over TCP framing
 	// and the payload must still round-trip byte-for-byte.
-	runTunnelEcho(t, 1, 1, "", `["TXT", "CNAME", "NULL", "HTTPS"]`, "RESOLVER_TRANSPORT = \"tcp\"\n")
+	runTunnelEcho(t, 5, 5, "", `["TXT", "CNAME", "NULL", "HTTPS"]`, "RESOLVER_TRANSPORT = \"tcp\"\n")
 }
 
 func TestTunnelEndToEndReshapedQNameTCPNonTXT(t *testing.T) {
@@ -241,7 +234,7 @@ func TestTunnelEndToEndReshapedQNameTCPNonTXT(t *testing.T) {
 	// TCP/53 + the non-TXT CNAME/NULL/HTTPS response channels, all at once. Proves
 	// the query-name reshaping composes with the TCP fallback and every response
 	// channel, with a byte-exact 64 KB echo.
-	runTunnelEcho(t, 1, 1, "", `["TXT", "CNAME", "NULL", "HTTPS"]`,
+	runTunnelEcho(t, 5, 5, "", `["TXT", "CNAME", "NULL", "HTTPS"]`,
 		"RESOLVER_TRANSPORT = \"tcp\"\nQNAME_LABEL_LENGTH = 24\n")
 }
 

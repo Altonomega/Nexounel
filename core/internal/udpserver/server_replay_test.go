@@ -95,21 +95,19 @@ func TestAuthenticatedIngressReplayReusesReplyWithoutDispatch(t *testing.T) {
 	}
 }
 
-func TestIngressReplayAllowsFreshARQEncryptionAndLegacyRepeats(t *testing.T) {
-	for _, method := range []int{1, 5} {
+func TestIngressReplayAllowsFreshARQRetransmission(t *testing.T) {
+	for _, method := range []int{3, 4, 5} {
 		s, query, prepared := replayTestQuery(t, method)
 		calls := 0
 		dispatch := func() []byte { calls++; return nil }
 		s.handleReplayProtectedPacket(query, prepared.parsed, prepared.decision, prepared.packet, dispatch)
-		if method == 5 {
-			// Identical plaintext with a fresh AEAD nonce is an ARQ retry, not
-			// a captured-ciphertext replay. Admission itself consumes no nonce.
-			query = buildReplayTestQuery(t, s.codecs[0])
-			var ok bool
-			prepared, ok = s.prepareIngressPacket(query)
-			if !ok {
-				t.Fatal("fresh retransmission was not admitted")
-			}
+		// Identical plaintext with a fresh AEAD nonce is an ARQ retry, not
+		// a captured-ciphertext replay. Admission itself consumes no nonce.
+		query = buildReplayTestQuery(t, s.codecs[0])
+		var ok bool
+		prepared, ok = s.prepareIngressPacket(query)
+		if !ok {
+			t.Fatal("fresh retransmission was not admitted")
 		}
 		s.handleReplayProtectedPacket(query, prepared.parsed, prepared.decision, prepared.packet, dispatch)
 		if calls != 2 {

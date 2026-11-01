@@ -31,7 +31,7 @@ func budgetTestQuery(t *testing.T, codec *security.Codec, edns uint16, packet Vp
 
 func budgetTestSession(t *testing.T) (*Server, *sessionRecord, *security.Codec) {
 	t.Helper()
-	s, _ := newDynamicTransportTestServer(t, 5, 5)
+	s, _ := newSingleMethodTransportTestServer(t, 5, 5)
 	codec := s.codecs[s.preferredCodec.Load()]
 	payload := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 1, 2, 3, 4}
 	record, _, err := s.sessions.findOrCreate(payload, 0, 0, 8, false, codec)
@@ -96,7 +96,7 @@ func TestResponseBudgetRetainsQueuedPayloadAcrossMixedUDPAndTCP(t *testing.T) {
 func TestResponseBudgetSessionNegotiationPreservesTCP(t *testing.T) {
 	for _, tcp := range []bool{false, true} {
 		t.Run(map[bool]string{false: "udp", true: "tcp"}[tcp], func(t *testing.T) {
-			s, _ := newDynamicTransportTestServer(t, 5, 5)
+			s, _ := newSingleMethodTransportTestServer(t, 5, 5)
 			codec, _ := security.NewCodec(5, "transport-matrix-shared-key")
 			init := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 9, 8, 7, 6}
 			query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{PacketType: Enums.PACKET_SESSION_INIT, Payload: init})
@@ -181,7 +181,7 @@ func TestResponseBudgetPersistentShrinkExplicitlyResetsAndRenegotiates(t *testin
 }
 
 func TestResponseBudgetMTUProbeUDPAndTCP(t *testing.T) {
-	s, _ := newDynamicTransportTestServer(t, 5, 5)
+	s, _ := newSingleMethodTransportTestServer(t, 5, 5)
 	codec, _ := security.NewCodec(5, "transport-matrix-shared-key")
 	payload := []byte{security.DownstreamEncryptedFlag, 1, 2, 3, 4, 5, 220} // 1500 bytes
 	query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{SessionID: 255, PacketType: Enums.PACKET_MTU_DOWN_REQ, Payload: payload})

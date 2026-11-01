@@ -58,59 +58,17 @@ func TestParseFromLabelsAnyMatchingDefersInflation(t *testing.T) {
 	}
 }
 
-// aeadFirstMethods mirrors udpserver.SetCodecSet's trial ordering: authenticated
-// (AES-GCM) methods first, then the unauthenticated ones. This is the order the
-// server actually decodes with at ingress; the ascending AllMethods order is
-// never used there. Ordering the trial set this way is what lets an authenticated
-// frame be matched by its authenticating codec before any unauthenticated codec
-// is reached.
-func aeadFirstMethods(methods []int) []int {
-	aead := make([]int, 0, len(methods))
-	other := make([]int, 0, len(methods))
-	for _, m := range methods {
-		if security.IsAuthenticatedMethod(m) {
-			aead = append(aead, m)
-		} else {
-			other = append(other, m)
-		}
-	}
-	return append(aead, other...)
-}
+// With a single configured codec, frames decode if and only if they were
+// encrypted with that codec's method. A frame from any other AES-GCM method
+// fails authentication and is rejected — there is no trial across methods.
+func TestParseInflatedFromLabelsAnyDecodesConfiguredMethodOnly(t *testing.T) {
+	payload := []byte("single-method-only")
 
-// Every method's encoded frame must be decoded by the auto-detect codec set, and
-// the detected index must map back to the method that produced it — under the
-// same conditions the server decodes with.
-//
-// The set is ordered AEAD-first exactly as udpserver.SetCodecSet orders it. Start
-// indices mirror the server's ingress trial:
-//
-//   - Authenticated (AES-GCM) frames start cold at index 0. Because every AEAD
-//     codec precedes every unauthenticated one, the correct method is found — and
-//     authenticates — before any unauthenticated codec is ever tried, so an
-//     authenticated frame can never be mis-claimed. This is the security-critical
-//     guarantee and it is deterministic.
-//   - Unauthenticated (None/XOR/ChaCha20) frames are NOT method-identifiable from
-//     ciphertext alone: a wrong-method "decrypt" yields garbage that can
-//     occasionally pass structural validation. The server copes by starting each
-//     trial at the last-successful codec; this mirrors that steady state by
-//     starting at the frame's own codec, whose decode of its own frame is always
-//     correct. (Asserting exact detection from a cold start for these methods
-//     would be testing something inherently undecidable.)
-func TestParseInflatedFromLabelsAnyDetectsEveryMethod(t *testing.T) {
-	ordered := aeadFirstMethods(security.AllMethods)
-	set, err := security.NewCodecSet(ordered, autoDetectKey)
-	if err != nil {
-		t.Fatalf("NewCodecSet: %v", err)
-	}
-
-	payload := []byte("auto-detect-me-please")
-
-	for setIdx, method := range ordered {
+	for _, method := range security.AllMethods {
 		codec, err := security.NewCodec(method, autoDetectKey)
 		if err != nil {
 			t.Fatalf("NewCodec(%d): %v", method, err)
 		}
-
 		labels, err := BuildEncodedAuto(BuildOptions{
 			PacketType: Enums.PACKET_PING,
 			Payload:    payload,
@@ -119,32 +77,37 @@ func TestParseInflatedFromLabelsAnyDetectsEveryMethod(t *testing.T) {
 			t.Fatalf("BuildEncodedAuto(method %d): %v", method, err)
 		}
 
-		start := 0
-		if !security.IsAuthenticatedMethod(method) {
-			start = setIdx
-		}
-		packet, detectedIdx, err := ParseInflatedFromLabelsAny(labels, set, start)
+		packet, detectedIdx, err := ParseInflatedFromLabelsAny(labels, []*security.Codec{codec}, 0)
 		if err != nil {
-			t.Fatalf("method %d: ParseInflatedFromLabelsAny failed: %v", method, err)
+			t.Fatalf("method %d: own frame failed to parse: %v", method, err)
 		}
-		if detectedIdx != setIdx {
-			t.Fatalf("method %d: detected set index %d (method %d), want %d",
-				method, detectedIdx, ordered[detectedIdx], setIdx)
+		if detectedIdx != 0 || packet.PacketType != Enums.PACKET_PING || !bytes.Equal(packet.Payload, payload) {
+			t.Fatalf("method %d: unexpected parse result idx=%d packet=%+v", method, detectedIdx, packet)
 		}
-		if packet.PacketType != Enums.PACKET_PING {
-			t.Fatalf("method %d: packet type = %d, want PING", method, packet.PacketType)
-		}
-		if !bytes.Equal(packet.Payload, payload) {
-			t.Fatalf("method %d: payload mismatch: got %q", method, packet.Payload)
+
+		for _, other := range security.AllMethods {
+			if other == method {
+				continue
+			}
+			otherCodec, err := security.NewCodec(other, autoDetectKey)
+			if err != nil {
+				t.Fatalf("NewCodec(%d): %v", other, err)
+			}
+			otherLabels, err := BuildEncodedAuto(BuildOptions{
+				PacketType: Enums.PACKET_PING,
+				Payload:    payload,
+			}, otherCodec, compression.DefaultMinSize)
+			if err != nil {
+				t.Fatalf("BuildEncodedAuto(method %d): %v", other, err)
+			}
+			if _, _, err := ParseInflatedFromLabelsAny(otherLabels, []*security.Codec{codec}, 0); err == nil {
+				t.Fatalf("method %d frame decoded with method %d codec: cross-method frames must be rejected", other, method)
+			}
 		}
 	}
 }
 
-func TestParseInflatedFromLabelsAnyPreferredFirstStillWorks(t *testing.T) {
-	set, err := security.NewCodecSet(security.AllMethods, autoDetectKey)
-	if err != nil {
-		t.Fatalf("NewCodecSet: %v", err)
-	}
+func TestParseInflatedFromLabelsAnySingleCodecDecodes(t *testing.T) {
 	codec, err := security.NewCodec(3, autoDetectKey) // AES-128-GCM
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
@@ -157,39 +120,9 @@ func TestParseInflatedFromLabelsAnyPreferredFirstStillWorks(t *testing.T) {
 		t.Fatalf("BuildEncodedAuto: %v", err)
 	}
 
-	_, idx, err := ParseInflatedFromLabelsAny(labels, set, 3)
-	if err != nil || idx != 3 {
-		t.Fatalf("preferred-first: idx=%d err=%v, want idx=3", idx, err)
-	}
-}
-
-func TestCodecTrialOrderNeverPlacesLegacyBeforeAEAD(t *testing.T) {
-	set, err := security.NewCodecSet(security.AllMethods, autoDetectKey)
-	if err != nil {
-		t.Fatalf("NewCodecSet: %v", err)
-	}
-
-	for _, start := range []int{0, 1, 2, 3, 4, 5} {
-		authenticatedDone := false
-		authenticatedCount := 0
-		for trial := 0; trial < len(set); trial++ {
-			idx := codecTrialIndex(set, start, trial)
-			if idx < 0 {
-				t.Fatalf("start %d trial %d returned no codec", start, trial)
-			}
-			authenticated := security.IsAuthenticatedMethod(set[idx].Method())
-			if !authenticated {
-				authenticatedDone = true
-				continue
-			}
-			if authenticatedDone {
-				t.Fatalf("start %d put authenticated method %d after a legacy decoder", start, set[idx].Method())
-			}
-			authenticatedCount++
-		}
-		if authenticatedCount != 3 {
-			t.Fatalf("start %d tried %d authenticated methods, want 3", start, authenticatedCount)
-		}
+	_, idx, err := ParseInflatedFromLabelsAny(labels, []*security.Codec{codec}, 0)
+	if err != nil || idx != 0 {
+		t.Fatalf("single-codec decode: idx=%d err=%v, want idx=0", idx, err)
 	}
 }
 

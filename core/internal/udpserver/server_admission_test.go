@@ -23,7 +23,7 @@ func TestIngressQueueCapacityKeepsFullBurstWithinMemoryLimit(t *testing.T) {
 }
 
 func TestIngressAdmissionRejectsNoiseBeforeQueue(t *testing.T) {
-	codec, err := security.NewCodec(1, "shared-ingress-test-key")
+	codec, err := security.NewCodec(5, "shared-ingress-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestIngressAdmissionRejectsNoiseBeforeQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !s.admitIngressPacket(valid) {
-		t.Fatal("valid keyed CottenDns frame was rejected")
+		t.Fatal("valid keyed frame was rejected")
 	}
 
 	wrongDomain, err := DnsParser.BuildTunnelTXTQuestionPacket("other.example.com", []byte(encoded), Enums.DNS_RECORD_TYPE_TXT, 1232)
@@ -57,7 +57,7 @@ func TestIngressAdmissionRejectsNoiseBeforeQueue(t *testing.T) {
 		t.Fatal("malformed datagram was admitted")
 	}
 
-	wrongCodec, err := security.NewCodec(1, "attacker-key")
+	wrongCodec, err := security.NewCodec(5, "attacker-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,9 +76,9 @@ func TestIngressAdmissionRejectsNoiseBeforeQueue(t *testing.T) {
 	}
 }
 
-func TestIngressAdmissionKeepsDynamicClientCompatibility(t *testing.T) {
-	const sharedKey = "dynamic-client-shared-key"
-	preferred, err := security.NewCodec(1, sharedKey)
+func TestIngressAdmissionAcceptsConfiguredMethodOnly(t *testing.T) {
+	const sharedKey = "configured-method-shared-key"
+	preferred, err := security.NewCodec(5, sharedKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,19 +86,7 @@ func TestIngressAdmissionKeepsDynamicClientCompatibility(t *testing.T) {
 		domainMatcher: domainMatcher.New([]string{"v.example.com"}, 3),
 		codecs:        []*security.Codec{preferred},
 	}
-	methods := security.AutoDetectMethods(1)
-	codecSet, err := security.NewCodecSet(methods, sharedKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	preferredIdx := 0
-	for i, method := range methods {
-		if method == 1 {
-			preferredIdx = i
-			break
-		}
-	}
-	s.SetCodecSet(codecSet, preferredIdx)
+	methods := []int{5}
 
 	queryTypes := []uint16{
 		Enums.DNS_RECORD_TYPE_A,

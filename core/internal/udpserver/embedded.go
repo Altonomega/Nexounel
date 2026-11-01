@@ -69,7 +69,7 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
 		cfg.Domain = append([]string(nil), in.Domains...)
 	}
 	cfg.AdvertiseDomains = append([]string(nil), cfg.Domain...)
-	cfg.DataEncryptionMethod, cfg.EncryptionAutoDetect = 5, false
+	cfg.DataEncryptionMethod = 5
 	cfg.TCPListenerEnabled, cfg.UDPIPv6Enabled, cfg.TCPIPv6Enabled = false, false, false
 	cfg.MinVPNLabelLength = 1
 	cfg.MaxActiveSessions, cfg.MaxStreamsPerSession = 64, 128

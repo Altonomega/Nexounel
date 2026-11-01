@@ -28,6 +28,9 @@ type EncryptionKeyInfo struct {
 }
 
 func EnsureServerEncryptionKey(cfg config.ServerConfig) (EncryptionKeyInfo, error) {
+	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {
+		return EncryptionKeyInfo{}, fmt.Errorf("unsupported DATA_ENCRYPTION_METHOD: %d (only AES-GCM methods 3, 4, 5 are supported)", cfg.DataEncryptionMethod)
+	}
 	info := EncryptionKeyInfo{
 		MethodID:   cfg.DataEncryptionMethod,
 		MethodName: EncryptionMethodName(cfg.DataEncryptionMethod),
@@ -70,14 +73,11 @@ func KeyFingerprint(key string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
+// EncryptionMethodName names an AES-GCM method. Legacy methods 0 (none),
+// 1 (XOR) and 2 (ChaCha20) and any unknown id are INVALID: they are never
+// normalized to a supported method.
 func EncryptionMethodName(methodID int) string {
 	switch methodID {
-	case 0:
-		return "NONE"
-	case 1:
-		return "XOR"
-	case 2:
-		return "ChaCha20"
 	case 3:
 		return "AES-128-GCM"
 	case 4:
@@ -85,10 +85,12 @@ func EncryptionMethodName(methodID int) string {
 	case 5:
 		return "AES-256-GCM"
 	default:
-		return "UNKNOWN"
+		return "INVALID"
 	}
 }
 
+// requiredKeyLength returns the key length for an AES-GCM method. Callers
+// must validate the method first; the default (32) applies to AES-256-GCM.
 func requiredKeyLength(methodID int) int {
 	switch methodID {
 	case 3:

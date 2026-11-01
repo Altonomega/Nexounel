@@ -32,7 +32,7 @@ func TestMTUSearchPinsCarrierAndFallsBackWithoutScoring(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			c := createTestClient(t)
 			var err error
-			c.codec, err = security.NewCodec(0, "")
+			c.codec, err = security.NewCodec(5, "mtu-carrier-test-key")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,9 +71,9 @@ func TestMTUSearchPinsCarrierAndFallsBackWithoutScoring(t *testing.T) {
 				payload := make([]byte, responseSize)
 				copy(payload, request.Payload[1:1+mtuProbeCodeLength])
 				binary.BigEndian.PutUint16(payload[mtuProbeCodeLength:], uint16(size))
-				return DnsParser.BuildVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
+				return DnsParser.BuildEncryptedVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
 					SessionID: 255, PacketType: responseType, Payload: payload,
-				}, false, true, true)
+				}, false, true, true, c.codec)
 			}}
 			if download {
 				ok, mtu, _, _, err := c.testDownloadMTU(context.Background(), conn, transport, 32)
@@ -108,7 +108,7 @@ func TestMTUSearchPinsCarrierAndFallsBackWithoutScoring(t *testing.T) {
 }
 
 func TestDownloadMTURejectsOversizedSmallCarrierBeforeSending(t *testing.T) {
-	for _, method := range []int{0, 2, 3} {
+	for _, method := range []int{3, 4, 5} {
 		c := createTestClient(t)
 		var err error
 		c.codec, err = security.NewCodec(method, "testkey")
@@ -137,7 +137,7 @@ func TestDownloadMTURejectsOversizedSmallCarrierBeforeSending(t *testing.T) {
 func TestDownloadMTUFallsBackToWorkingSmallCarrier(t *testing.T) {
 	c := createTestClient(t)
 	var err error
-	c.codec, err = security.NewCodec(0, "")
+	c.codec, err = security.NewCodec(5, "mtu-carrier-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,12 +171,12 @@ func TestDownloadMTUFallsBackToWorkingSmallCarrier(t *testing.T) {
 		payload := make([]byte, size)
 		copy(payload, request.Payload[1:1+mtuProbeCodeLength])
 		binary.BigEndian.PutUint16(payload[mtuProbeCodeLength:], uint16(size))
-		return DnsParser.BuildVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
+		return DnsParser.BuildEncryptedVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
 			SessionID: 255, PacketType: Enums.PACKET_MTU_DOWN_RES, Payload: payload,
-		}, false, true, true)
+		}, false, true, true, c.codec)
 	}}
 	ok, mtu, _, _, err := c.testDownloadMTU(context.Background(), conn, transport, 32)
-	if err != nil || !ok || mtu != capacity-VpnProto.MaxHeaderRawSize() {
+	if err != nil || !ok || mtu != capacity-VpnProto.MaxHeaderRawSize()-c.codec.CiphertextOverhead() {
 		t.Fatalf("small-carrier fallback: ok=%v mtu=%d capacity=%d err=%v", ok, mtu, capacity, err)
 	}
 	if len(seen) < 3 || seen[0] != Enums.DNS_RECORD_TYPE_TXT || seen[1] != Enums.DNS_RECORD_TYPE_TXT || seen[2] != Enums.DNS_RECORD_TYPE_CNAME {
@@ -187,7 +187,7 @@ func TestDownloadMTUFallsBackToWorkingSmallCarrier(t *testing.T) {
 func TestResolverMTURecheckTriesAlternateCarrier(t *testing.T) {
 	c := createTestClient(t)
 	var err error
-	c.codec, err = security.NewCodec(0, "")
+	c.codec, err = security.NewCodec(5, "mtu-carrier-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,9 +222,9 @@ func TestResolverMTURecheckTriesAlternateCarrier(t *testing.T) {
 		payload := make([]byte, responseSize)
 		copy(payload, request.Payload[1:1+mtuProbeCodeLength])
 		binary.BigEndian.PutUint16(payload[mtuProbeCodeLength:], uint16(size))
-		return DnsParser.BuildVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
+		return DnsParser.BuildEncryptedVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{
 			SessionID: 255, PacketType: responseType, Payload: payload,
-		}, false, true, true)
+		}, false, true, true, c.codec)
 	}}
 	if !c.recheckResolverMTU(context.Background(), conn, transport) || !uploadSeen || !downloadSeen {
 		t.Fatalf("alternate carrier must restore resolver: upload=%v download=%v", uploadSeen, downloadSeen)
@@ -233,7 +233,7 @@ func TestResolverMTURecheckTriesAlternateCarrier(t *testing.T) {
 
 func TestDownloadMTURejectsDisabledAAAATXTFallback(t *testing.T) {
 	c := createTestClient(t)
-	c.codec, _ = security.NewCodec(0, "")
+	c.codec, _ = security.NewCodec(5, "mtu-carrier-test-key")
 	c.queryTypes = []uint16{Enums.DNS_RECORD_TYPE_AAAA}
 	c.ednsUDPSize = 1232
 	conn := &Connection{Domain: "example.com", ResolverLabel: "test"}
@@ -254,7 +254,7 @@ func TestDownloadMTURejectsDisabledAAAATXTFallback(t *testing.T) {
 		payload := make([]byte, size)
 		copy(payload, request.Payload[1:5])
 		binary.BigEndian.PutUint16(payload[4:6], uint16(size))
-		response, err := DnsParser.BuildVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{SessionID: 255, PacketType: Enums.PACKET_MTU_DOWN_RES, Payload: payload}, false, false, false)
+		response, err := DnsParser.BuildEncryptedVPNResponsePacketMatchingQuery(query, question.Name, conn.Domain, VpnProto.Packet{SessionID: 255, PacketType: Enums.PACKET_MTU_DOWN_RES, Payload: payload}, false, false, false, c.codec)
 		if err == nil {
 			parsed, _ := DnsParser.ParsePacket(response)
 			if len(parsed.Answers) == 0 || parsed.Answers[0].Type != Enums.DNS_RECORD_TYPE_TXT {

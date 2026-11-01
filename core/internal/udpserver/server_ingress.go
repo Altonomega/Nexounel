@@ -50,11 +50,9 @@ func (s *Server) handlePacket(packet []byte, tcp ...bool) []byte {
 }
 
 func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, tcp ...bool) []byte {
-	// Encryption-method auto-detection: the upstream frame is fully encrypted, so
-	// the client's method is discovered by trying each candidate codec. s.codecs
-	// is pre-ordered AEAD-first (see SetCodecSet), so iterating from index 0 tries
-	// authenticated methods before any unauthenticated one and costs a single
-	// attempt for the common single-method deployment.
+	// Single-method decryption: the server holds exactly one codec, built
+	// for the configured AES-GCM method. A frame encrypted with any other
+	// method fails authentication here and is answered with no data.
 	startIdx := int(s.preferredCodec.Load())
 	vpnPacket, codecIdx, err := VpnProto.ParseInflatedFromLabelsAnyMatching(decision.Labels, s.codecs, startIdx, s.matchesInboundPacketCandidate)
 	if err != nil {

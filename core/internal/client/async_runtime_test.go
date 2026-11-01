@@ -33,11 +33,11 @@ func createTestClient(t *testing.T) *Client {
 		RXChannelSize:        10,
 		RX_TX_Workers:        1,
 		TunnelProcessWorkers: 1,
-		DataEncryptionMethod: 1,
+		DataEncryptionMethod: 5,
 		EncryptionKey:        "testkey",
 	}
 	log := logger.New("TestLogger", "debug")
-	codec, err := security.NewCodec(1, "testkey")
+	codec, err := security.NewCodec(5, "testkey")
 	if err != nil {
 		t.Fatalf("failed to create codec: %v", err)
 	}

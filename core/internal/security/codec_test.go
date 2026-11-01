@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -13,8 +13,8 @@ import (
 )
 
 func TestCodecRoundTrip(t *testing.T) {
-	methods := []int{0, 1, 2, 3, 4, 5}
-	plaintext := []byte("cottendns-roundtrip-test")
+	methods := []int{3, 4, 5}
+	plaintext := []byte("nexounel-roundtrip-test")
 	rawKey := "0123456789abcdef0123456789abcdef"
 
 	for _, method := range methods {
@@ -39,6 +39,20 @@ func TestCodecRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCodecRejectsLegacyAndUnknownMethods(t *testing.T) {
+	// Methods 0 (none), 1 (XOR) and 2 (ChaCha20) are removed: they provide
+	// no authentication and must never construct. Unknown ids fail the
+	// same way; nothing is silently normalized to a supported method.
+	for _, method := range []int{-1, 0, 1, 2, 6, 99} {
+		if _, err := NewCodec(method, "0123456789abcdef0123456789abcdef"); err == nil {
+			t.Fatalf("NewCodec(%d) must fail, but it constructed a codec", method)
+		}
+	}
+	if got := AllMethods; len(got) != 3 || got[0] != 3 || got[1] != 4 || got[2] != 5 {
+		t.Fatalf("AllMethods = %v, want [3 4 5]", got)
+	}
+}
+
 func TestCodecRejectsInvalidCiphertext(t *testing.T) {
 	codec, err := NewCodec(3, "0123456789abcdef")
 	if err != nil {
@@ -50,24 +64,28 @@ func TestCodecRejectsInvalidCiphertext(t *testing.T) {
 	}
 }
 
-func TestCodecXORChangesData(t *testing.T) {
-	codec, err := NewCodec(1, "key-material")
+func TestCodecAESGCMChangesDataAndRejectsTampering(t *testing.T) {
+	codec, err := NewCodec(5, "key-material-for-aes-gcm-test")
 	if err != nil {
 		t.Fatalf("NewCodec returned error: %v", err)
 	}
 
-	plaintext := []byte("xor-data")
+	plaintext := []byte("aes-gcm-data")
 	ciphertext, err := codec.Encrypt(plaintext)
 	if err != nil {
 		t.Fatalf("Encrypt returned error: %v", err)
 	}
 	if bytes.Equal(ciphertext, plaintext) {
-		t.Fatal("XOR encryption should change non-empty data")
+		t.Fatal("AES-GCM encryption should change non-empty data")
+	}
+	ciphertext[len(ciphertext)-1] ^= 1
+	if _, err := codec.Decrypt(ciphertext); err == nil {
+		t.Fatal("Decrypt should reject tampered AES-GCM ciphertext")
 	}
 }
 
 func TestCodecEncodeDecodeLowerBase32RoundTrip(t *testing.T) {
-	codec, err := NewCodec(2, "0123456789abcdef0123456789abcdef")
+	codec, err := NewCodec(5, "0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatalf("NewCodec returned error: %v", err)
 	}

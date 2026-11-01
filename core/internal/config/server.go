@@ -214,7 +214,6 @@ type ServerConfig struct {
 	SupportedUploadCompressionTypes   []int    `toml:"SUPPORTED_UPLOAD_COMPRESSION_TYPES"`
 	SupportedDownloadCompressionTypes []int    `toml:"SUPPORTED_DOWNLOAD_COMPRESSION_TYPES"`
 	DataEncryptionMethod              int      `toml:"DATA_ENCRYPTION_METHOD"`
-	EncryptionAutoDetect              bool     `toml:"ENCRYPTION_AUTO_DETECT"`
 	ARecordDataDelivery               bool     `toml:"A_RECORD_DATA_DELIVERY"`
 	AAAARecordDataDelivery            bool     `toml:"AAAA_RECORD_DATA_DELIVERY"`
 	EncryptionKeyFile                 string   `toml:"ENCRYPTION_KEY_FILE"`
@@ -365,7 +364,6 @@ func defaultServerConfig() ServerConfig {
 		ARecordDataDelivery:               true,
 		AAAARecordDataDelivery:            true,
 		DataEncryptionMethod:              3,
-		EncryptionAutoDetect:              true,
 		FECAutoEnabled:                    true,
 		FECAutoLossThreshold:              0.3,
 		FECSuperEnabled:                   true,
@@ -740,8 +738,8 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.SupportedUploadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedUploadCompressionTypes)
 	cfg.SupportedDownloadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedDownloadCompressionTypes)
 
-	if cfg.DataEncryptionMethod < 0 || cfg.DataEncryptionMethod > 5 {
-		cfg.DataEncryptionMethod = 3
+	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {
+		return cfg, fmt.Errorf("invalid DATA_ENCRYPTION_METHOD: %d (valid: 3, 4, 5 AES-GCM only)", cfg.DataEncryptionMethod)
 	}
 
 	if cfg.EncryptionKeyFile == "" {

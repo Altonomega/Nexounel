@@ -31,10 +31,10 @@ func secureTestQuery(t *testing.T, codec *security.Codec, qtype uint16, opts Vpn
 }
 
 func TestEncryptedDownstreamDynamicSessionAndProbes(t *testing.T) {
-	for method := 1; method <= 5; method++ {
+	for method := 3; method <= 5; method++ {
 		for _, base64 := range []bool{false, true} {
 			t.Run(fmt.Sprintf("method%d/base64%v", method, base64), func(t *testing.T) {
-				s, _ := newDynamicTransportTestServer(t, 5, method)
+				s, _ := newSingleMethodTransportTestServer(t, method, method)
 				s.cfg.ARecordDataDelivery = true
 				s.cfg.AAAARecordDataDelivery = true
 				codec, _ := security.NewCodec(method, "transport-matrix-shared-key")
@@ -95,10 +95,11 @@ func TestEncryptedDownstreamDynamicSessionAndProbes(t *testing.T) {
 					t.Fatal("small carrier lost queued bulk frame")
 				}
 				// A valid decoder for another method cannot use the live session.
-				wrong, _ := security.NewCodec(1, "transport-matrix-shared-key")
-				if method == 1 {
-					wrong, _ = security.NewCodec(5, "transport-matrix-shared-key")
+				wrongMethod := 3
+				if method == 3 {
+					wrongMethod = 5
 				}
+				wrong, _ := security.NewCodec(wrongMethod, "transport-matrix-shared-key")
 				before := record.lastActivity()
 				response := s.safeHandlePacket(secureTestQuery(t, wrong, Enums.DNS_RECORD_TYPE_TXT, ping))
 				if _, err := DnsParser.ExtractEncryptedVPNResponseMatching(response, base64, []string{"v.example.com"}, codec); err == nil {

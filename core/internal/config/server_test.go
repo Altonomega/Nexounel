@@ -11,6 +11,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -83,7 +84,7 @@ func TestLoadServerConfigWithOverridesAppliesFlagPrecedence(t *testing.T) {
 PROTOCOL_TYPE = "SOCKS5"
 UDP_PORT = 53
 DOMAIN = ["config.example.com"]
-DATA_ENCRYPTION_METHOD = 1
+DATA_ENCRYPTION_METHOD = 5
 SUPPORTED_UPLOAD_COMPRESSION_TYPES = [0, 3]
 SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 3]
 `), 0o644); err != nil {
@@ -94,7 +95,7 @@ SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 3]
 		Values: map[string]any{
 			"UDPPort":                           5300,
 			"Domain":                            []string{"flag.example.com", "alt.example.com"},
-			"DataEncryptionMethod":              2,
+			"DataEncryptionMethod":              5,
 			"SupportedUploadCompressionTypes":   []int{0, 1},
 			"SupportedDownloadCompressionTypes": []int{0, 1, 3},
 		},
@@ -110,7 +111,7 @@ SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 3]
 		t.Fatalf("unexpected domain override: %+v", cfg.Domain)
 	}
 	if cfg.DataEncryptionMethod != 2 {
-		t.Fatalf("unexpected data encryption override: got=%d want=%d", cfg.DataEncryptionMethod, 2)
+		t.Fatalf("unexpected data encryption override: got=%d want=%d", cfg.DataEncryptionMethod, 5)
 	}
 	if len(cfg.SupportedUploadCompressionTypes) != 2 || cfg.SupportedUploadCompressionTypes[0] != 0 || cfg.SupportedUploadCompressionTypes[1] != 1 {
 		t.Fatalf("unexpected upload compression override: %+v", cfg.SupportedUploadCompressionTypes)
@@ -224,7 +225,7 @@ func TestServerConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
 	if got, ok := overrides.Values["UseExternalSOCKS5"].(bool); !ok || !got {
 		t.Fatalf("unexpected socks5 override: %#v", overrides.Values["UseExternalSOCKS5"])
 	}
-	if got, ok := overrides.Values["DataEncryptionMethod"].(int); !ok || got != 2 {
+	if got, ok := overrides.Values["DataEncryptionMethod"].(int); !ok || got != 5 {
 		t.Fatalf("unexpected encryption method override: %#v", overrides.Values["DataEncryptionMethod"])
 	}
 	gotDomains, ok := overrides.Values["Domain"].([]string)
@@ -247,4 +248,18 @@ func containsInt(values []int, needle int) bool {
 		}
 	}
 	return false
+}
+
+func TestServerConfigRejectsLegacyEncryptionMethods(t *testing.T) {
+	for _, method := range []int{0, 1, 2} {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "server_config.toml")
+		content := "PROTOCOL_TYPE = \"SOCKS5\"\nDOMAIN = [\"config.example.com\"]\nDATA_ENCRYPTION_METHOD = " + strconv.Itoa(method) + "\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadServerConfig(configPath); err == nil {
+			t.Fatalf("DATA_ENCRYPTION_METHOD = %d must be rejected, not clamped to AES-GCM", method)
+		}
+	}
 }

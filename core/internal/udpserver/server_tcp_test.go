@@ -110,9 +110,9 @@ func TestServeTCPDNSMessages_EmptyResponseKeepsConnOpen(t *testing.T) {
 	}
 }
 
-func TestTCPFallbackUsesSameDynamicEncryptedCarrierHandler(t *testing.T) {
+func TestTCPFallbackUsesSameEncryptedCarrierHandler(t *testing.T) {
 	const sharedKey = "tcp-fallback-shared-key"
-	preferred, err := security.NewCodec(1, sharedKey)
+	preferred, err := security.NewCodec(5, sharedKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,13 +132,6 @@ func TestTCPFallbackUsesSameDynamicEncryptedCarrierHandler(t *testing.T) {
 		SupportedUploadCompressionTypes:   []int{0},
 		SupportedDownloadCompressionTypes: []int{0},
 	}, logger.New("tcp-fallback-test", "ERROR"), preferred)
-	methods := security.AutoDetectMethods(1)
-	codecSet, err := security.NewCodecSet(methods, sharedKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.SetCodecSet(codecSet, 0)
-
 	changedCodec, err := security.NewCodec(5, sharedKey)
 	if err != nil {
 		t.Fatal(err)

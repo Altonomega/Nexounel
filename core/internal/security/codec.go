@@ -14,12 +14,9 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
-
-	"golang.org/x/crypto/chacha20"
 
 	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
@@ -30,10 +27,7 @@ var (
 	ErrInvalidCiphertext  = errors.New("invalid ciphertext")
 )
 
-const (
-	chachaNonceSize = 16
-	aesNonceSize    = 12
-)
+const aesNonceSize = 12
 
 var cryptoBufferPool = sync.Pool{
 	New: func() any {
@@ -78,8 +72,6 @@ func (c *Codec) CiphertextOverhead() int {
 		return 0
 	}
 	switch c.method {
-	case 2:
-		return chachaNonceSize
 	case 3, 4, 5:
 		return aesNonceSize + 16
 	default:
@@ -147,51 +139,25 @@ func NewCodecFromConfig(cfg config.ServerConfig, rawKey string) (*Codec, error) 
 	return NewCodec(cfg.DataEncryptionMethod, rawKey)
 }
 
-// AllMethods lists every supported encryption method id, in ascending order.
-var AllMethods = []int{0, 1, 2, 3, 4, 5}
-
-// AutoDetectMethods returns the safe compatibility set for a server. Method 0
-// has no keying at all, so silently enabling it beside an encrypted configured
-// method would let anyone manufacture apparently valid tunnel frames. Keyed
-// legacy methods remain available for existing clients, and all AEAD methods
-// remain available for clients that upgrade encryption without a server edit.
-func AutoDetectMethods(configured int) []int {
-	methods := []int{1, 2, 3, 4, 5}
-	if configured == 0 {
-		return append([]int{0}, methods...)
-	}
-	return methods
-}
+// AllMethods lists every supported encryption method id, in ascending
+// order. Only AES-GCM methods are supported: methods 0 (none), 1 (XOR)
+// and 2 (ChaCha20) were removed and are rejected by NewCodec.
+var AllMethods = []int{3, 4, 5}
 
 // IsAuthenticatedMethod reports whether the method provides authenticated
-// encryption (AEAD). Only AES-GCM (methods 3, 4, 5) authenticate: a wrong key or
-// method makes Open fail cleanly. None/XOR/ChaCha20 (0, 1, 2) are unauthenticated,
-// so a wrong-method "decrypt" silently yields garbage. This distinction drives
-// the server's auto-detect trial order — AEAD methods are tried first so an
-// authenticated frame can never be mis-claimed by an unauthenticated codec.
+// encryption (AEAD). Every constructible method (AES-GCM 3, 4, 5)
+// authenticates: a wrong key or method makes Open fail cleanly instead of
+// silently yielding garbage.
 func IsAuthenticatedMethod(method int) bool {
 	return method >= 3 && method <= 5
 }
 
-// NewCodecSet builds one Codec per method id, all derived from the same raw key.
-// It is used for server-side encryption-method auto-detection: because the whole
-// upstream frame is encrypted, the server cannot know which method the client
-// used without trying to decrypt, so it keeps a codec for each candidate method.
-// The shared secret is the raw key string; deriveKey adapts it per method.
-func NewCodecSet(methods []int, rawKey string) ([]*Codec, error) {
-	set := make([]*Codec, 0, len(methods))
-	for _, m := range methods {
-		codec, err := NewCodec(m, rawKey)
-		if err != nil {
-			return nil, err
-		}
-		set = append(set, codec)
-	}
-	return set, nil
-}
-
+// NewCodec builds a codec for an AES-GCM method only (3: AES-128-GCM,
+// 4: AES-192-GCM, 5: AES-256-GCM). Methods 0 (none), 1 (XOR) and 2
+// (ChaCha20) are rejected with ErrInvalidCodecMethod: they provide no
+// authentication and must never be negotiated or silently accepted.
 func NewCodec(method int, rawKey string) (*Codec, error) {
-	if method < 0 || method > 5 {
+	if method < 3 || method > 5 {
 		return nil, ErrInvalidCodecMethod
 	}
 
@@ -205,15 +171,6 @@ func newCodecWithKey(method int, derivedKey []byte) (*Codec, error) {
 	}
 
 	switch method {
-	case 0:
-		codec.encrypt = codec.noCrypto
-		codec.decrypt = codec.noCrypto
-	case 1:
-		codec.encrypt = codec.xorCrypto
-		codec.decrypt = codec.xorCrypto
-	case 2:
-		codec.encrypt = codec.chachaEncrypt
-		codec.decrypt = codec.chachaDecrypt
 	case 3, 4, 5:
 		aead, err := newAESGCM(derivedKey)
 		if err != nil {
@@ -254,10 +211,6 @@ func (c *Codec) EncryptAndEncode(data []byte) (string, error) {
 	if c == nil {
 		return "", ErrInvalidCodecMethod
 	}
-	if c.method == 0 {
-		return baseCodec.Encode(data), nil
-	}
-
 	bufPtr := getCryptoBuffer(len(data) + 64)
 	defer putCryptoBuffer(bufPtr)
 
@@ -272,10 +225,6 @@ func (c *Codec) EncryptAndEncodeBytes(data []byte) ([]byte, error) {
 	if c == nil {
 		return nil, ErrInvalidCodecMethod
 	}
-	if c.method == 0 {
-		return baseCodec.EncodeToBytes(data), nil
-	}
-
 	bufPtr := getCryptoBuffer(len(data) + 64)
 	defer putCryptoBuffer(bufPtr)
 
@@ -295,9 +244,6 @@ func (c *Codec) DecodeAndDecrypt(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.method == 0 {
-		return decoded, nil
-	}
 	return c.decrypt(nil, decoded)
 }
 
@@ -310,119 +256,7 @@ func (c *Codec) DecodeStringAndDecrypt(data string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.method == 0 {
-		return decoded, nil
-	}
 	return c.decrypt(nil, decoded)
-}
-
-func (c *Codec) noCrypto(dst, data []byte) ([]byte, error) {
-	if cap(dst) < len(data) {
-		dst = make([]byte, len(data))
-	} else {
-		dst = dst[:len(data)]
-	}
-	copy(dst, data)
-	return dst, nil
-}
-
-func (c *Codec) xorCrypto(dst, data []byte) ([]byte, error) {
-	key := c.key
-	keyLen := len(key)
-	if len(data) == 0 || keyLen == 0 {
-		if cap(dst) < len(data) {
-			dst = make([]byte, len(data))
-		} else {
-			dst = dst[:len(data)]
-		}
-		copy(dst, data)
-		return dst, nil
-	}
-
-	if cap(dst) < len(data) {
-		dst = make([]byte, len(data))
-	} else {
-		dst = dst[:len(data)]
-	}
-
-	if keyLen == 1 {
-		mask := key[0]
-		for i := 0; i < len(data); i++ {
-			dst[i] = data[i] ^ mask
-		}
-		return dst, nil
-	}
-
-	fullBlocks := len(data) / keyLen
-	offset := 0
-	for block := 0; block < fullBlocks; block++ {
-		for i := 0; i < keyLen; i++ {
-			dst[offset+i] = data[offset+i] ^ key[i]
-		}
-		offset += keyLen
-	}
-	for i := offset; i < len(data); i++ {
-		dst[i] = data[i] ^ key[i-offset]
-	}
-	return dst, nil
-}
-
-func (c *Codec) chachaEncrypt(dst, data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		if cap(dst) == 0 {
-			dst = make([]byte, 0)
-		} else {
-			dst = dst[:0]
-		}
-		return dst, nil
-	}
-
-	reqSize := chachaNonceSize + len(data)
-	if cap(dst) < reqSize {
-		dst = make([]byte, reqSize)
-	} else {
-		dst = dst[:reqSize]
-	}
-
-	nonce := dst[:chachaNonceSize]
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("generate chacha20 nonce: %w", err)
-	}
-
-	stream, err := chacha20.NewUnauthenticatedCipher(c.key, nonce[4:])
-	if err != nil {
-		return nil, err
-	}
-	stream.SetCounter(binary.LittleEndian.Uint32(nonce[:4]))
-	stream.XORKeyStream(dst[chachaNonceSize:], data)
-	return dst, nil
-}
-
-func (c *Codec) chachaDecrypt(dst, data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		return nil, nil // Return nil per original intention
-	}
-	if len(data) <= chachaNonceSize {
-		return nil, ErrInvalidCiphertext
-	}
-
-	nonce := data[:chachaNonceSize]
-	ciphertext := data[chachaNonceSize:]
-
-	if cap(dst) < len(ciphertext) {
-		dst = make([]byte, len(ciphertext))
-	} else {
-		dst = dst[:len(ciphertext)]
-	}
-
-	stream, err := chacha20.NewUnauthenticatedCipher(c.key, nonce[4:])
-	if err != nil {
-		return nil, err
-	}
-	stream.SetCounter(binary.LittleEndian.Uint32(nonce[:4]))
-
-	stream.XORKeyStream(dst, ciphertext)
-	return dst, nil
 }
 
 func (c *Codec) makeAESEncryptor(aead cipher.AEAD) func(dst, src []byte) ([]byte, error) {
@@ -496,7 +330,7 @@ func deriveKey(method int, rawKey string) []byte {
 	targetLen := requiredDerivedKeyLength(method)
 
 	switch method {
-	case 2, 5:
+	case 5:
 		sum := sha256.Sum256(bKey)
 		return sum[:]
 	case 3:
@@ -511,7 +345,7 @@ func deriveKey(method int, rawKey string) []byte {
 
 func requiredDerivedKeyLength(method int) int {
 	switch method {
-	case 2, 5:
+	case 5:
 		return 32
 	case 3:
 		return 16
