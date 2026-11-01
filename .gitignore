@@ -1,0 +1,7 @@
+/nexounel-server
+/nexounel-node
+/nexounel-panel
+dist/
+*.exe
+*.test
+*.out
