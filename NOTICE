@@ -1,0 +1,26 @@
+Nexounel — Notices and Attribution
+====================================
+
+The tunnel core in `core/` is derived from CottenDNS, which is itself
+derived from StormDNS and MasterDnsVPN. All three upstream works are
+under the MIT License, and this project preserves those terms.
+
+- MasterDnsVPN
+  Original author: Amin Mahmoudi
+  License: MIT License
+
+- StormDNS modifications (upstream fork)
+  Maintained by: NullRoute1970
+  License: MIT License
+
+- CottenDNS modifications
+  Maintained by: tajirax
+  License: MIT License
+
+Derivation base: CottenDNS commit 7db7b73658c791cce62300d29647e4d369d6e1e4
+(2026-10-24), LICENSE text verified verbatim MIT at derivation time.
+
+Retained upstream files keep their original copyright notices in their
+headers. Files written for Nexounel are MIT, Copyright (c) 2026 Mashani.
+The WhiteDNS client applications are NOT part of this project and none
+of their code is reused here.
