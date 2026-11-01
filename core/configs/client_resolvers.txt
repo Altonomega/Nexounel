@@ -1,0 +1,28 @@
+# ==============================================================================
+# Nexounel node — starter resolver list (client_resolvers.txt).
+#
+# One resolver per line: an IP address, optionally with ":port"
+# (default 53), or a CIDR prefix (expanded, capped). Lines starting
+# with "#" are comments; invalid lines are skipped.
+#
+# The probe pass measures every entry and clusters by capacity, so
+# listing more resolvers only adds classes/reserves — it never hurts
+# a class's operating point. Replace/extend this starter list with
+# the resolvers reachable from the node's network.
+# ==============================================================================
+
+# Google Public DNS
+8.8.8.8
+8.8.4.4
+
+# Cloudflare
+1.1.1.1
+1.0.0.1
+
+# Quad9
+9.9.9.9
+149.112.112.112
+
+# OpenDNS
+208.67.222.222
+208.67.220.220

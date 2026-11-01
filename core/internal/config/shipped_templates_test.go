@@ -1,40 +1,33 @@
 // ==============================================================================
-// CottenDNS
-// Author: tajirax
-// Github: https://github.com/TaJirax/CottenDns
-// Year: 2026
+// Nexounel — derived from the CottenDNS core (MIT; see NOTICE).
 // ==============================================================================
-// shipped_templates_test.go — guards the config templates that the one-line
-// installers deploy verbatim (server_config.toml.simple / client_config.toml.simple).
-// They must parse cleanly through the real loaders and expose the newer feature
-// knobs, so a fresh install always carries them.
+// shipped_templates_test.go — guards the sample configs shipped in
+// configs/ (nexounel-server.toml / nexounel-node.toml). They must parse
+// cleanly through the real loaders and expose the Phase 1 knobs, so a
+// fresh install always carries them.
 // ==============================================================================
 
 package config
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func repoFile(name string) string {
-	// This test file lives in internal/config; the templates are two levels up.
-	return filepath.Join("..", "..", name)
+func shippedConfig(name string) string {
+	// This test file lives in internal/config; the samples are two levels
+	// up, under configs/.
+	return filepath.Join("..", "..", "configs", name)
 }
 
 func TestShippedServerTemplateParsesWithFeatureKnobs(t *testing.T) {
-	cfg, err := LoadServerConfig(repoFile("server_config.toml.simple"))
+	cfg, err := LoadServerConfig(shippedConfig("nexounel-server.toml"))
 	if err != nil {
-		t.Fatalf("server_config.toml.simple failed to load: %v", err)
+		t.Fatalf("nexounel-server.toml failed to load: %v", err)
 	}
-	// Auto-detect and the FEC defaults must be present and sane so a fresh
-	// deploy honors whatever delivery/encryption method the client picks.
-	if !cfg.EncryptionAutoDetect {
-		t.Errorf("ENCRYPTION_AUTO_DETECT should default true in the shipped template")
-	}
-	if cfg.DataEncryptionMethod != 3 {
-		t.Errorf("server DATA_ENCRYPTION_METHOD = %d, want authenticated AES-128-GCM method 3", cfg.DataEncryptionMethod)
+	// AES-GCM-only: the shipped server must use the strongest method.
+	if cfg.DataEncryptionMethod != 5 {
+		t.Errorf("server DATA_ENCRYPTION_METHOD = %d, want AES-256-GCM method 5", cfg.DataEncryptionMethod)
 	}
 	if cfg.FECBlockSize <= 0 || cfg.FECParity <= 0 {
 		t.Errorf("FEC defaults not finalized: block=%d parity=%d", cfg.FECBlockSize, cfg.FECParity)
@@ -47,6 +40,17 @@ func TestShippedServerTemplateParsesWithFeatureKnobs(t *testing.T) {
 	}
 	if cfg.MaxIngressQueueBytes != 64*1024*1024 {
 		t.Errorf("MAX_INGRESS_QUEUE_BYTES = %d, want 64 MiB", cfg.MaxIngressQueueBytes)
+	}
+	// Phase 1 keys: node registry + forward-port allowlist.
+	if cfg.NodeRegistryFile == "" {
+		t.Error("NODE_REGISTRY_FILE is empty in the shipped server template")
+	}
+	lo, hi, ok, err := cfg.ForwardPortRangeBounds()
+	if err != nil || !ok || lo != 10001 || hi != 10010 {
+		t.Errorf("FORWARD_PORT_RANGE bounds = (%d, %d, %v, %v), want (10001, 10010, true, nil)", lo, hi, ok, err)
+	}
+	if len(cfg.Domain) == 0 {
+		t.Error("DOMAIN is empty in the shipped server template")
 	}
 }
 
@@ -62,62 +66,70 @@ func TestLegacyServerPacketBufferIsClampedOnUpgrade(t *testing.T) {
 	}
 }
 
-func TestShippedClientTemplateParses(t *testing.T) {
-	// The shipped client template has a placeholder ENCRYPTION_KEY the user
-	// fills in (it comes from the server), so a standalone load is expected to
-	// fail at exactly that validation — and nowhere earlier. Reaching the
-	// key-required check proves the TOML and QUERY_TYPES (incl. the new NULL /
-	// HTTPS / SVCB names) are structurally valid.
-	_, err := LoadClientConfig(repoFile("client_config.toml.simple"))
-	if err == nil {
-		return // a key was present; fully valid.
-	}
-	if !strings.Contains(err.Error(), "ENCRYPTION_KEY") {
-		t.Fatalf("client_config.toml.simple failed before the key check (template is malformed): %v", err)
-	}
-}
-
-func TestShippedClientTemplateKeepsLongSessionRecoveryDefaults(t *testing.T) {
-	cfg, err := loadClientConfigFile(repoFile("client_config.toml.simple"))
+func TestShippedNodeTemplateParses(t *testing.T) {
+	cfg, err := LoadClientConfig(shippedConfig("nexounel-node.toml"))
 	if err != nil {
-		t.Fatalf("client_config.toml.simple failed to load: %v", err)
+		t.Fatalf("nexounel-node.toml failed to load: %v", err)
 	}
-	if cfg.AutoDisableTimeoutWindowSeconds != 90.0 {
-		t.Fatalf("AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS = %.1f, want 90.0", cfg.AutoDisableTimeoutWindowSeconds)
+	if cfg.DataEncryptionMethod != 5 {
+		t.Errorf("node DATA_ENCRYPTION_METHOD = %d, want AES-256-GCM method 5", cfg.DataEncryptionMethod)
 	}
-	if cfg.ARQInactivityTimeoutSeconds != 600.0 {
-		t.Fatalf("ARQ_INACTIVITY_TIMEOUT_SECONDS = %.1f, want 600.0", cfg.ARQInactivityTimeoutSeconds)
+	if cfg.NodeID == "" {
+		t.Error("NODE_ID is empty in the shipped node template")
+	}
+	if cfg.NodeKeyFile == "" {
+		t.Error("NODE_KEY_FILE is empty in the shipped node template")
+	}
+	if !cfg.MultiSessionEnabled {
+		t.Error("MULTISESSION_ENABLED should default true in the shipped node template")
+	}
+	if cfg.CapacityMargin != 0.95 {
+		t.Errorf("CAPACITY_MARGIN = %v, want 0.95", cfg.CapacityMargin)
+	}
+	lo, hi, ok, err := cfg.ForwardRangeBounds()
+	if err != nil || !ok || lo != 10001 || hi != 10010 {
+		t.Errorf("FORWARD_RANGE bounds = (%d, %d, %v, %v), want (10001, 10010, true, nil)", lo, hi, ok, err)
+	}
+	if cfg.ProtocolType != "TCP" {
+		t.Errorf("PROTOCOL_TYPE = %q, want TCP (multi-session forward mode)", cfg.ProtocolType)
 	}
 }
 
-func TestBundledPresetTemplatesParse(t *testing.T) {
-	serverPresets := []string{
-		"server_config.speed.toml",
-		"server_config.survival.toml",
-		"server_config.tcp-survival.toml",
+func TestClientConfigNodeKeyFileReplacesInlineKey(t *testing.T) {
+	resolvers, err := filepath.Abs(shippedConfig("client_resolvers.txt"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, name := range serverPresets {
-		t.Run(name, func(t *testing.T) {
-			if _, err := LoadServerConfig(repoFile(name)); err != nil {
-				t.Fatalf("%s failed to load: %v", name, err)
-			}
-		})
+	cfg := defaultClientConfig()
+	cfg.ResolversFilePath = resolvers
+	cfg.EncryptionKey = ""
+	cfg.NodeKeyFile = "node.key"
+	cfg.Domains = []string{"tunnel.example.com"}
+	if _, err := finalizeClientConfig(cfg); err != nil {
+		t.Fatalf("node-key config without ENCRYPTION_KEY should finalize: %v", err)
 	}
 
-	clientPresets := []string{
-		"client_config.speed.toml",
-		"client_config.survival.toml",
-		"client_config.tcp-survival.toml",
+	cfg.NodeKeyFile = ""
+	if _, err := finalizeClientConfig(cfg); err == nil {
+		t.Fatal("config with neither ENCRYPTION_KEY nor NODE_KEY_FILE should fail")
 	}
-	for _, name := range clientPresets {
-		t.Run(name, func(t *testing.T) {
-			_, err := LoadClientConfig(repoFile(name))
-			if err == nil {
-				return
-			}
-			if !strings.Contains(err.Error(), "ENCRYPTION_KEY") {
-				t.Fatalf("%s failed before the key check (template is malformed): %v", name, err)
-			}
-		})
+}
+
+func TestClientConfigRejectsBadForwardRange(t *testing.T) {
+	resolvers, err := filepath.Abs(shippedConfig("client_resolvers.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaultClientConfig()
+	cfg.ResolversFilePath = resolvers
+	cfg.EncryptionKey = "test-key"
+	cfg.Domains = []string{"tunnel.example.com"}
+	cfg.ForwardRange = "10010-10001"
+	if _, err := finalizeClientConfig(cfg); err == nil {
+		t.Fatal("reversed FORWARD_RANGE should fail validation")
+	}
+	cfg.ForwardRange = "1-70000"
+	if _, err := finalizeClientConfig(cfg); err == nil {
+		t.Fatal("out-of-range FORWARD_RANGE should fail validation")
 	}
 }

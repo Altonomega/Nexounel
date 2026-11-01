@@ -377,6 +377,9 @@ func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Clie
 	if err != nil {
 		return nil, err
 	}
+	// The effective key (key file wins) is the key in use everywhere:
+	// codec construction, domain-rotation salt, status output.
+	cfg.EncryptionKey = key
 	codec, err := security.NewCodec(cfg.DataEncryptionMethod, key)
 	if err != nil {
 		return nil, fmt.Errorf("client codec setup failed: %w", err)
@@ -433,6 +436,8 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 	if err != nil {
 		return nil, err
 	}
+	// See Bootstrap: the effective key is the key in use everywhere.
+	cfg.EncryptionKey = key
 	codec, err := security.NewCodec(cfg.DataEncryptionMethod, key)
 	if err != nil {
 		return nil, fmt.Errorf("client codec setup failed: %w", err)

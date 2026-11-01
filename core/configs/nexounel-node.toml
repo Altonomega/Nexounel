@@ -1,0 +1,54 @@
+# ==============================================================================
+# Nexounel node (Iran side) — sample configuration.
+#
+# Copy this file next to the nexounel-node binary (or pass --config) and
+# edit the placeholders. The node probes every resolver listed in
+# client_resolvers.txt (next to this file, or --resolvers), clusters
+# them into capacity classes, runs one tunnel session per class, and
+# stripes accepted connections across the ready sessions.
+#
+# Identity is mandatory: NODE_ID names this node in logs, NODE_KEY_FILE
+# holds this node's own key (the bare key string, whitespace-trimmed).
+# The key file's content replaces ENCRYPTION_KEY; leave ENCRYPTION_KEY
+# unset in node-key mode.
+# ==============================================================================
+
+# Tunnel domain(s), matching the server's DOMAIN.
+DOMAINS = ["tunnel.example.com"]
+
+PROTOCOL_TYPE = "TCP"
+
+# Local forward listeners. In multi-session mode the node listens on
+# every port in FORWARD_RANGE on LISTEN_IP; each accepted connection's
+# local port is carried to the server, which dials the same port on
+# its FORWARD_IP when the port is inside its FORWARD_PORT_RANGE.
+LISTEN_IP = "127.0.0.1"
+LISTEN_PORT = 18000
+FORWARD_RANGE = "10001-10010"
+
+# Node identity (required by the nexounel-node binary).
+NODE_ID = "iran-1"
+NODE_KEY_FILE = "node.key"
+
+# Encryption: AES-GCM only. Must match the server's method and the key
+# the server's registry holds for this node. 5 = AES-256-GCM.
+DATA_ENCRYPTION_METHOD = 5
+
+# Multi-session behavior. true (default) = probe, cluster, one session
+# per capacity class. false = single upstream session, one operating
+# point, upstream listener behavior (LISTEN_IP:LISTEN_PORT).
+MULTISESSION_ENABLED = true
+
+# Safety margin applied to measured capacity per class: a class
+# operates at floor(0.95 x measured) per direction. Must be in (0, 1].
+CAPACITY_MARGIN = 0.95
+
+# Resolver list: client_resolvers.txt next to this file (one "IP" or
+# "IP:port" per line), or pass --resolvers. The probe pass measures
+# every entry; unusable entries become reserves, never silently dropped.
+
+# Record types rotated across queries (NULL/HTTPS/SVCB add carrier
+# diversity on filtered paths).
+QUERY_TYPES = ["TXT", "NULL", "HTTPS", "SVCB", "A", "AAAA"]
+
+LOG_LEVEL = "INFO"

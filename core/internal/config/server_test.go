@@ -110,7 +110,7 @@ SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 3]
 	if len(cfg.Domain) != 2 || cfg.Domain[0] != "flag.example.com" || cfg.Domain[1] != "alt.example.com" {
 		t.Fatalf("unexpected domain override: %+v", cfg.Domain)
 	}
-	if cfg.DataEncryptionMethod != 2 {
+	if cfg.DataEncryptionMethod != 5 {
 		t.Fatalf("unexpected data encryption override: got=%d want=%d", cfg.DataEncryptionMethod, 5)
 	}
 	if len(cfg.SupportedUploadCompressionTypes) != 2 || cfg.SupportedUploadCompressionTypes[0] != 0 || cfg.SupportedUploadCompressionTypes[1] != 1 {
@@ -213,7 +213,7 @@ func TestServerConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
 		"-domain=a.example.com,b.example.com",
 		"-use-external-socks5",
 		"-supported-upload-compression-types=0,1",
-		"-data-encryption-method=2",
+		"-data-encryption-method=5",
 	}); err != nil {
 		t.Fatalf("flag parse failed: %v", err)
 	}

@@ -971,8 +971,8 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	}
 
 	cfg.EncryptionKey = strings.TrimSpace(cfg.EncryptionKey)
-	if cfg.EncryptionKey == "" {
-		return cfg, fmt.Errorf("ENCRYPTION_KEY is required in client config")
+	if cfg.EncryptionKey == "" && strings.TrimSpace(cfg.NodeKeyFile) == "" {
+		return cfg, fmt.Errorf("ENCRYPTION_KEY is required in client config (or NODE_KEY_FILE for per-node keys)")
 	}
 
 	cfg.Domains = normalizeClientDomains(cfg.Domains)

@@ -1,0 +1,68 @@
+# ==============================================================================
+# Nexounel server (mother) — sample configuration.
+#
+# Copy this file next to the nexounel-server binary (or pass --config) and
+# edit the placeholders. The server answers tunnel queries for DOMAIN and
+# forwards accepted TCP streams to FORWARD_IP at the port the node
+# requested (FORWARD_PORT_RANGE allowlist) or to FORWARD_IP:FORWARD_PORT
+# for legacy clients.
+#
+# Key management, two modes (exactly one):
+#   1. Node registry (recommended): list every node in NODE_REGISTRY_FILE.
+#      Each node is identified by the key that decrypts its sessions.
+#      Create the registry file before the first run; see nodes.toml
+#      documentation in the repository.
+#   2. Single shared key: comment out NODE_REGISTRY_FILE. The server
+#      generates/loads the key at ENCRYPTION_KEY_FILE on first run.
+#      Every node then shares one key (no per-node attribution).
+# ==============================================================================
+
+# Tunnel domain(s) the server answers for. Clients query subdomains of
+# these names. Replace with the domain you control (Cloudflare records
+# point at this server).
+DOMAIN = ["tunnel.example.com"]
+
+PROTOCOL_TYPE = "TCP"
+
+# DNS listeners. UDP_PORT 53 needs root/cap_net_bind_service; for lab
+# runs override with --udp-port (e.g. 15353).
+UDP_HOST = "0.0.0.0"
+UDP_PORT = 53
+TCP_LISTENER_ENABLED = true
+
+# Encryption: AES-GCM only. 3 = AES-128-GCM, 4 = AES-192-GCM,
+# 5 = AES-256-GCM (recommended). Methods 0/1/2 (none/XOR/ChaCha20)
+# were removed and are rejected.
+DATA_ENCRYPTION_METHOD = 5
+
+# Per-node key registry (TOML: [[nodes]] with id + key/key_file).
+# Relative paths resolve against the config file's directory.
+NODE_REGISTRY_FILE = "nodes.toml"
+
+# Single shared-key mode fallback (used only when NODE_REGISTRY_FILE
+# is empty): the key file the server generates/loads.
+ENCRYPTION_KEY_FILE = "encrypt_key.txt"
+
+# TCP forwarding. FORWARD_IP is the host streams are dialed on.
+# FORWARD_PORT is the legacy fixed target; FORWARD_PORT_RANGE is the
+# allowlist of ports a node may request in its STREAM_SYN payload.
+# With a range configured, out-of-range requests are rejected with no
+# dial. Set FORWARD_PORT = 0 to disable the fixed-port fallback (an
+# empty SYN payload is then rejected too, unless the fixed port is
+# inside the range).
+FORWARD_IP = "127.0.0.1"
+FORWARD_PORT = 0
+FORWARD_PORT_RANGE = "10001-10010"
+
+# Ingress buffers. 4096 bytes matches the DNS-sized datagram ceiling;
+# 64 MiB bounds the ingress queue.
+MAX_PACKET_SIZE = 4096
+MAX_INGRESS_QUEUE_BYTES = 67108864
+
+# Forward error correction defaults are finalized by the loader
+# (FEC_BLOCK_SIZE / FEC_PARITY); uncomment to tune.
+# FEC_DOWNLOAD_ENABLED = true
+# FEC_BLOCK_SIZE = 4
+# FEC_PARITY = 4
+
+LOG_LEVEL = "INFO"

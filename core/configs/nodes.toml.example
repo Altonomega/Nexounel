@@ -1,0 +1,19 @@
+# ==============================================================================
+# EXAMPLE node registry — copy to nodes.toml and replace every key.
+#
+# Each node is identified by possession of its key: the server builds
+# one codec per entry (all sharing the server's DATA_ENCRYPTION_METHOD)
+# and attributes each session to the entry whose key decrypted it.
+# A key that matches no entry is rejected at ingress before any
+# session state is created.
+#
+# SECURITY: this file holds live keys. Keep it readable only by the
+# server operator (chmod 600) and never commit real keys to git.
+# ==============================================================================
+
+[[nodes]]
+id = "iran-1"
+# Inline key, or key_file = "/etc/nexounel/nodes/iran-1.key" (file wins).
+# REPLACE the placeholder below with this node's real key (the same
+# string stored in the node's NODE_KEY_FILE).
+key = "REPLACE-WITH-IRAN-1-KEY"

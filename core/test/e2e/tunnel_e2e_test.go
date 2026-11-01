@@ -294,8 +294,8 @@ func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, server
 
 	serverBin := filepath.Join(work, binName("server"))
 	clientBin := filepath.Join(work, binName("client"))
-	buildBinary(t, root, "./cmd/server", serverBin)
-	buildBinary(t, root, "./cmd/client", clientBin)
+	buildBinary(t, root, "./cmd/nexounel-server", serverBin)
+	buildBinary(t, root, "./cmd/nexounel-node", clientBin)
 
 	echoPort := startEchoServer(t)
 	udpPort := freeUDPPortForHost(t, dnsHost)
@@ -370,6 +370,10 @@ ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 	}
 	keyData, _ := os.ReadFile(keyFile)
 	encryptionKey := strings.TrimSpace(string(keyData))
+	nodeKeyFile := filepath.Join(work, "node.key")
+	if err := os.WriteFile(nodeKeyFile, []byte(encryptionKey+"\n"), 0600); err != nil {
+		t.Fatalf("write node key: %v", err)
+	}
 
 	resolverFile := filepath.Join(work, "client_resolvers.txt")
 	if len(resolverHosts) == 0 {
@@ -390,6 +394,9 @@ LISTEN_IP = "127.0.0.1"
 LISTEN_PORT = %d
 %s
 ENCRYPTION_KEY = "%s"
+NODE_ID = "e2e-node"
+NODE_KEY_FILE = "node.key"
+MULTISESSION_ENABLED = false
 QUERY_TYPES = %s
 RESOLVER_BALANCING_STRATEGY = 1
 DATA_ENCRYPTION_METHOD = %d
