@@ -52,7 +52,9 @@ ENCRYPTION_KEY_FILE = "encrypt_key.txt"
 # inside the range).
 FORWARD_IP = "127.0.0.1"
 FORWARD_PORT = 0
-FORWARD_PORT_RANGE = "10001-10010"
+# Example only: pick a range that is unused on BOTH servers — never reuse
+# ports already serving other tunnels or services.
+FORWARD_PORT_RANGE = "10101-10110"
 
 # Ingress buffers. 4096 bytes matches the DNS-sized datagram ceiling;
 # 64 MiB bounds the ingress queue.

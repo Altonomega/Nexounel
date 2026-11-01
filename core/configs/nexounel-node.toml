@@ -24,10 +24,13 @@ PROTOCOL_TYPE = "TCP"
 # its FORWARD_IP when the port is inside its FORWARD_PORT_RANGE.
 LISTEN_IP = "127.0.0.1"
 LISTEN_PORT = 18000
-FORWARD_RANGE = "10001-10010"
+# Example only: pick a range that is unused on BOTH servers — never reuse
+# ports already serving other tunnels or services. Must match the
+# server's FORWARD_PORT_RANGE.
+FORWARD_RANGE = "10101-10110"
 
 # Node identity (required by the nexounel-node binary).
-NODE_ID = "iran-1"
+NODE_ID = "node-1"
 NODE_KEY_FILE = "node.key"
 
 # Encryption: AES-GCM only. Must match the server's method and the key
