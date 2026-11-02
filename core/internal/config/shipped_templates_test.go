@@ -46,8 +46,8 @@ func TestShippedServerTemplateParsesWithFeatureKnobs(t *testing.T) {
 		t.Error("NODE_REGISTRY_FILE is empty in the shipped server template")
 	}
 	lo, hi, ok, err := cfg.ForwardPortRangeBounds()
-	if err != nil || !ok || lo != 10001 || hi != 10010 {
-		t.Errorf("FORWARD_PORT_RANGE bounds = (%d, %d, %v, %v), want (10001, 10010, true, nil)", lo, hi, ok, err)
+	if err != nil || !ok || lo != 10101 || hi != 10110 {
+		t.Errorf("FORWARD_PORT_RANGE bounds = (%d, %d, %v, %v), want (10101, 10110, true, nil)", lo, hi, ok, err)
 	}
 	if len(cfg.Domain) == 0 {
 		t.Error("DOMAIN is empty in the shipped server template")
@@ -87,8 +87,8 @@ func TestShippedNodeTemplateParses(t *testing.T) {
 		t.Errorf("CAPACITY_MARGIN = %v, want 0.95", cfg.CapacityMargin)
 	}
 	lo, hi, ok, err := cfg.ForwardRangeBounds()
-	if err != nil || !ok || lo != 10001 || hi != 10010 {
-		t.Errorf("FORWARD_RANGE bounds = (%d, %d, %v, %v), want (10001, 10010, true, nil)", lo, hi, ok, err)
+	if err != nil || !ok || lo != 10101 || hi != 10110 {
+		t.Errorf("FORWARD_RANGE bounds = (%d, %d, %v, %v), want (10101, 10110, true, nil)", lo, hi, ok, err)
 	}
 	if cfg.ProtocolType != "TCP" {
 		t.Errorf("PROTOCOL_TYPE = %q, want TCP (multi-session forward mode)", cfg.ProtocolType)
