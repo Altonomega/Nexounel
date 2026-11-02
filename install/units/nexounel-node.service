@@ -1,0 +1,15 @@
+[Unit]
+Description=Nexounel node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nexounel
+ExecStart=/opt/nexounel/nexounel-node -config /opt/nexounel/nexounel-node.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

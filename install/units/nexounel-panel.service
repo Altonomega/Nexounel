@@ -1,0 +1,15 @@
+[Unit]
+Description=Nexounel panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nexounel
+ExecStart=/opt/nexounel/nexounel-panel -config /opt/nexounel/nexounel-panel.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

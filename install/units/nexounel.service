@@ -1,0 +1,15 @@
+[Unit]
+Description=Nexounel server (mother)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nexounel
+ExecStart=/opt/nexounel/nexounel-server -config /opt/nexounel/nexounel-server.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

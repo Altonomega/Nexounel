@@ -1,0 +1,9 @@
+/var/log/nexounel/*.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    su root adm
+    create 0640 root adm
+}
