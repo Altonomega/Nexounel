@@ -113,6 +113,7 @@ type Job struct {
 	ID                 string
 	Kind               string
 	NodeID             string
+	HostPort           string // SSH target, for host-key confirmation
 	Status             string // running, succeeded, failed, needs-confirmation
 	Error              string
 	HostKeyFingerprint string
@@ -303,6 +304,7 @@ func RunProvision(ctx context.Context, req ProvisionRequest, factory TransportFa
 	}
 	secrets := []string{req.Password, req.NodeKey, string(req.PrivateKeyPEM)}
 	job := store.New(string(req.Mode), req.NodeID, secrets)
+	job.HostPort = net.JoinHostPort(req.Host, fmt.Sprint(req.Port))
 	runner := &provisionRunner{req: req, factory: factory, job: job, secrets: secrets}
 	runner.run(ctx)
 	return job, nil
