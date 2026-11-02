@@ -133,7 +133,7 @@ cp -a "$REPO_ROOT/install/logrotate/nexounel" "$STAGING/logrotate/"
 
 TARBALL_PATH="$OUT_DIR/$TARBALL_NAME"
 printf 'Creating %s ...\n' "$TARBALL_PATH"
-tar --sort-name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf - -C "$WORKDIR" "$TOP_DIR" | gzip -n >"$TARBALL_PATH"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf - -C "$WORKDIR" "$TOP_DIR" | gzip -n >"$TARBALL_PATH"
 
 (cd "$OUT_DIR" && sha256sum "$TARBALL_NAME" >"${TARBALL_NAME}.sha256")
 printf 'Wrote %s\n' "$OUT_DIR/${TARBALL_NAME}.sha256"
