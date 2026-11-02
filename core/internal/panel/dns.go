@@ -110,21 +110,28 @@ func (r *UDPResolver) timeout() time.Duration {
 	return r.Timeout
 }
 
-// LookupA queries type A for name at the given resolver IP.
+// LookupA queries type A for name at the given resolver IP. The query
+// asks for recursion: the answer section carries the record.
 func (r *UDPResolver) LookupA(ctx context.Context, name, server string) ([]string, error) {
-	return r.query(ctx, name, server, 1)
+	return r.query(ctx, name, server, 1, true)
 }
 
-// LookupNS queries type NS for name at the given resolver IP.
+// LookupNS queries type NS for name at the given resolver IP WITHOUT
+// recursion. A delegation can only be verified from the referral: a
+// recursive query for the delegated name is chased to the mother
+// itself, which answers NODATA (SOA) for its own NS records, so the
+// answer section is empty even when the delegation is correct. With
+// recursion disabled the resolver returns the referral, whose NS
+// records live in the authority section.
 func (r *UDPResolver) LookupNS(ctx context.Context, name, server string) ([]string, error) {
-	return r.query(ctx, name, server, 2)
+	return r.query(ctx, name, server, 2, false)
 }
 
-func (r *UDPResolver) query(ctx context.Context, name, server string, qtype uint16) ([]string, error) {
+func (r *UDPResolver) query(ctx context.Context, name, server string, qtype uint16, recursion bool) ([]string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	msg, err := buildDNSQuery(name, qtype)
+	msg, err := buildDNSQuery(name, qtype, recursion)
 	if err != nil {
 		return nil, err
 	}
@@ -157,16 +164,20 @@ func (r *UDPResolver) query(ctx context.Context, name, server string, qtype uint
 	if err != nil {
 		return nil, fmt.Errorf("read DNS response from %s: %w", server, err)
 	}
-	return parseDNSResponse(buf[:n], qtype)
+	return parseDNSResponse(buf[:n], qtype, qtype == 2)
 }
 
-func buildDNSQuery(name string, qtype uint16) ([]byte, error) {
+func buildDNSQuery(name string, qtype uint16, recursion bool) ([]byte, error) {
 	id := uint16(rand.Uint32())
 	msg := make([]byte, 0, 64)
 	header := make([]byte, 12)
 	binary.BigEndian.PutUint16(header[0:2], id)
-	binary.BigEndian.PutUint16(header[2:4], 0x0100) // recursion desired
-	binary.BigEndian.PutUint16(header[4:6], 1)      // QDCOUNT
+	flags := uint16(0x0000)
+	if recursion {
+		flags = 0x0100 // recursion desired
+	}
+	binary.BigEndian.PutUint16(header[2:4], flags)
+	binary.BigEndian.PutUint16(header[4:6], 1) // QDCOUNT
 	msg = append(msg, header...)
 	for _, label := range strings.Split(strings.TrimSuffix(name, "."), ".") {
 		if label == "" || len(label) > 63 {
@@ -240,7 +251,7 @@ func parseDNSNameDepth(msg []byte, offset int, depth int) (string, int, error) {
 	return strings.Join(labels, "."), next, nil
 }
 
-func parseDNSResponse(msg []byte, wantType uint16) ([]string, error) {
+func parseDNSResponse(msg []byte, wantType uint16, includeAuthority bool) ([]string, error) {
 	if len(msg) < 12 {
 		return nil, errors.New("DNS response too short")
 	}
@@ -253,6 +264,7 @@ func parseDNSResponse(msg []byte, wantType uint16) ([]string, error) {
 	}
 	qdCount := int(binary.BigEndian.Uint16(msg[4:6]))
 	anCount := int(binary.BigEndian.Uint16(msg[6:8]))
+	nsCount := int(binary.BigEndian.Uint16(msg[8:10]))
 	offset := 12
 	for i := 0; i < qdCount; i++ {
 		_, next, err := parseDNSName(msg, offset)
@@ -265,36 +277,50 @@ func parseDNSResponse(msg []byte, wantType uint16) ([]string, error) {
 		}
 	}
 	var values []string
-	for i := 0; i < anCount; i++ {
-		_, next, err := parseDNSName(msg, offset)
-		if err != nil {
-			return nil, err
-		}
-		offset = next
-		if offset+10 > len(msg) {
-			return nil, errors.New("DNS answer overruns message")
-		}
-		rtype := binary.BigEndian.Uint16(msg[offset : offset+2])
-		rdLen := int(binary.BigEndian.Uint16(msg[offset+8 : offset+10]))
-		offset += 10
-		if offset+rdLen > len(msg) {
-			return nil, errors.New("DNS rdata overruns message")
-		}
-		rdata := msg[offset : offset+rdLen]
-		if rtype == wantType {
-			switch wantType {
-			case 1:
-				if len(rdata) == 4 {
-					values = append(values, net.IP(rdata).String())
-				}
-			case 2:
-				target, _, err := parseDNSName(msg, offset)
-				if err == nil {
-					values = append(values, target)
+	scan := func(count int) error {
+		for i := 0; i < count; i++ {
+			_, next, err := parseDNSName(msg, offset)
+			if err != nil {
+				return err
+			}
+			offset = next
+			if offset+10 > len(msg) {
+				return errors.New("DNS record overruns message")
+			}
+			rtype := binary.BigEndian.Uint16(msg[offset : offset+2])
+			rdLen := int(binary.BigEndian.Uint16(msg[offset+8 : offset+10]))
+			offset += 10
+			if offset+rdLen > len(msg) {
+				return errors.New("DNS rdata overruns message")
+			}
+			rdata := msg[offset : offset+rdLen]
+			if rtype == wantType {
+				switch wantType {
+				case 1:
+					if len(rdata) == 4 {
+						values = append(values, net.IP(rdata).String())
+					}
+				case 2:
+					target, _, err := parseDNSName(msg, offset)
+					if err == nil {
+						values = append(values, target)
+					}
 				}
 			}
+			offset += rdLen
 		}
-		offset += rdLen
+		return nil
+	}
+	if err := scan(anCount); err != nil {
+		return nil, err
+	}
+	// Referrals carry the delegated NS records in the authority
+	// section; answer-section records are preferred when present,
+	// so both sections are collected for NS queries.
+	if includeAuthority {
+		if err := scan(nsCount); err != nil {
+			return nil, err
+		}
 	}
 	return values, nil
 }

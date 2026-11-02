@@ -113,11 +113,17 @@ func TestUDPResolverAgainstPacketTransport(t *testing.T) {
 	if len(values) != 1 || values[0] != "203.0.113.10" {
 		t.Fatalf("unexpected parsed values: %v", values)
 	}
-	// NS answers with a compressed target name parse back correctly.
+	// NS verification sends a NON-recursive query and reads the
+	// referral: a recursive query for a delegated name is chased to
+	// the mother, which answers NODATA, so the answer section is
+	// empty even when the delegation is correct. The mock therefore
+	// returns ANCOUNT=0, NSCOUNT=1 with the NS record in the
+	// authority section.
 	clientEnd2, serverEnd2 := newPacketConnPair()
 	resolver.dialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
 		return clientEnd2, nil
 	}
+	var nsReqFlags uint16
 	go func() {
 		buf := make([]byte, 4096)
 		n, err := serverEnd2.Read(buf)
@@ -125,14 +131,16 @@ func TestUDPResolverAgainstPacketTransport(t *testing.T) {
 			return
 		}
 		req := buf[:n]
+		nsReqFlags = binary.BigEndian.Uint16(req[2:4])
 		resp := make([]byte, 0, len(req)+32)
 		resp = append(resp, req[:2]...)
 		resp = append(resp, 0x81, 0x80)
 		resp = append(resp, req[4:6]...)
-		resp = append(resp, 0, 1)
-		resp = append(resp, 0, 0, 0, 0)
+		resp = append(resp, 0, 0) // ANCOUNT: a referral has no answers
+		resp = append(resp, 0, 1) // NSCOUNT: one authority record
+		resp = append(resp, 0, 0) // ARCOUNT
 		resp = append(resp, req[12:]...)
-		// Answer name pointer + NS rdata as an uncompressed name.
+		// Authority name pointer + NS rdata as an uncompressed name.
 		resp = append(resp, 0xC0, 0x0C, 0, 2, 0, 1)
 		ttl := make([]byte, 4)
 		binary.BigEndian.PutUint32(ttl, 300)
@@ -146,16 +154,59 @@ func TestUDPResolverAgainstPacketTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if nsReqFlags&0x0100 != 0 {
+		t.Fatalf("NS query must not request recursion, flags=%04x", nsReqFlags)
+	}
 	if len(nsValues) != 1 || nsValues[0] != "ns1.example.invalid" {
 		t.Fatalf("unexpected NS values: %v", nsValues)
 	}
 	// The wire helpers also round-trip on their own.
-	query, err := buildDNSQuery("ns1.example.invalid", 1)
+	query, err := buildDNSQuery("ns1.example.invalid", 1, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(query) < 12 || query[2] != 0x01 {
 		t.Fatalf("malformed query: %v", query)
+	}
+}
+
+// TestUDPResolverNSAnswerSectionParses keeps the union behavior: an NS
+// record that does arrive in the answer section (some resolvers answer
+// from cache) is still collected.
+func TestUDPResolverNSAnswerSectionParses(t *testing.T) {
+	clientEnd, serverEnd := newPacketConnPair()
+	resolver := &UDPResolver{Timeout: 2 * time.Second, dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+		return clientEnd, nil
+	}}
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := serverEnd.Read(buf)
+		if err != nil {
+			return
+		}
+		req := buf[:n]
+		resp := make([]byte, 0, len(req)+32)
+		resp = append(resp, req[:2]...)
+		resp = append(resp, 0x81, 0x80)
+		resp = append(resp, req[4:6]...)
+		resp = append(resp, 0, 1) // ANCOUNT
+		resp = append(resp, 0, 0, 0, 0)
+		resp = append(resp, req[12:]...)
+		resp = append(resp, 0xC0, 0x0C, 0, 2, 0, 1)
+		ttl := make([]byte, 4)
+		binary.BigEndian.PutUint32(ttl, 300)
+		resp = append(resp, ttl...)
+		target := []byte{3, 'n', 's', '1', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 7, 'i', 'n', 'v', 'a', 'l', 'i', 'd', 0}
+		resp = append(resp, 0, byte(len(target)))
+		resp = append(resp, target...)
+		_, _ = serverEnd.Write(resp)
+	}()
+	values, err := resolver.LookupNS(context.Background(), "v.example.invalid", "8.8.8.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 || values[0] != "ns1.example.invalid" {
+		t.Fatalf("unexpected NS values: %v", values)
 	}
 }
 
