@@ -175,9 +175,9 @@ type ServerConfig struct {
 	ZSTDLongEnabled bool `toml:"ZSTD_LONG_ENABLED"`
 	// Throughput pack (prototype, reserved): redundancy-elimination
 	// layer flags. Not yet wired on the server side; both default off.
-	REEnabled    bool `toml:"RE_ENABLED"`
-	RECacheMaxMB int  `toml:"RE_CACHE_MAX_MB"`
-	MinAllowedClientARQInitialRTOSeconds   float64 `toml:"MIN_ALLOWED_CLIENT_ARQ_INITIAL_RTO_SECONDS"`
+	REEnabled                            bool    `toml:"RE_ENABLED"`
+	RECacheMaxMB                         int     `toml:"RE_CACHE_MAX_MB"`
+	MinAllowedClientARQInitialRTOSeconds float64 `toml:"MIN_ALLOWED_CLIENT_ARQ_INITIAL_RTO_SECONDS"`
 
 	MaxDNSResponseBytes            int      `toml:"MAX_DNS_RESPONSE_BYTES"`
 	DropLogIntervalSecs            float64  `toml:"DROP_LOG_INTERVAL_SECONDS"`

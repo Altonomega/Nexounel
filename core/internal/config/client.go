@@ -159,16 +159,16 @@ type ClientConfig struct {
 	// long-distance matching. PackingEnabled coalesces small outbound
 	// segments up to the probed MTU under PackingMaxDelayMs.
 	// REEnabled turns on the redundancy-elimination layer.
-	ZSTDDictEnabled     bool `toml:"ZSTD_DICT_ENABLED"`
-	ZSTDLevel           int  `toml:"ZSTD_LEVEL"`
-	ZSTDLongEnabled     bool `toml:"ZSTD_LONG_ENABLED"`
-	PackingEnabled      bool `toml:"PACKING_ENABLED"`
-	PackingMaxDelayMs   int  `toml:"PACKING_MAX_DELAY_MS"`
-	PackingMaxBufferBytes int `toml:"PACKING_MAX_BUFFER_BYTES"`
-	REEnabled           bool `toml:"RE_ENABLED"`
-	RECacheMaxMB        int  `toml:"RE_CACHE_MAX_MB"`
-	DataEncryptionMethod                  int     `toml:"DATA_ENCRYPTION_METHOD"`
-	EncryptionKey                         string  `toml:"ENCRYPTION_KEY"`
+	ZSTDDictEnabled       bool   `toml:"ZSTD_DICT_ENABLED"`
+	ZSTDLevel             int    `toml:"ZSTD_LEVEL"`
+	ZSTDLongEnabled       bool   `toml:"ZSTD_LONG_ENABLED"`
+	PackingEnabled        bool   `toml:"PACKING_ENABLED"`
+	PackingMaxDelayMs     int    `toml:"PACKING_MAX_DELAY_MS"`
+	PackingMaxBufferBytes int    `toml:"PACKING_MAX_BUFFER_BYTES"`
+	REEnabled             bool   `toml:"RE_ENABLED"`
+	RECacheMaxMB          int    `toml:"RE_CACHE_MAX_MB"`
+	DataEncryptionMethod  int    `toml:"DATA_ENCRYPTION_METHOD"`
+	EncryptionKey         string `toml:"ENCRYPTION_KEY"`
 	// Node identity (Nexounel per-node keys). When NODE_KEY_FILE is set,
 	// the key file's content replaces ENCRYPTION_KEY. NODE_ID identifies
 	// the node in logs; the server attributes sessions by the key that
