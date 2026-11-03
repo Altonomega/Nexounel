@@ -550,10 +550,18 @@ func (c *Client) runAllMTUProbeWorkersWithLimit(
 	workerLimit func() int,
 ) {
 	total := len(c.connections)
+	// Scale-audit F1b: dead resolvers skip the binary-search pass. The skip
+	// set is computed fresh per call so transport fallback re-evaluates
+	// liveness on the new transport; nil when the pre-filter is gated off.
+	skip := c.livenessSkipSet(ctx)
 	if workerCount <= 1 {
 		for idx := range c.connections {
 			if ctx.Err() != nil {
 				return
+			}
+			if skip[idx] {
+				c.emitScanResult(c.connections[idx].ResolverLabel, false)
+				continue
 			}
 			conn := &c.connections[idx]
 			c.runConnectionMTUTest(ctx, conn, idx+1, total, uploadCaps[conn.Domain], counters)
@@ -572,11 +580,15 @@ func (c *Client) runAllMTUProbeWorkersWithLimit(
 	startJob := func(idx int) {
 		active++
 		go func() {
-			conn := &c.connections[idx]
-			c.runConnectionMTUTest(ctx, conn, idx+1, total, uploadCaps[conn.Domain], counters)
-			if onValid != nil {
-				if snapshot, ok := c.validMTUConnectionSnapshot(idx); ok {
-					onValid(snapshot)
+			if skip[idx] {
+				c.emitScanResult(c.connections[idx].ResolverLabel, false)
+			} else {
+				conn := &c.connections[idx]
+				c.runConnectionMTUTest(ctx, conn, idx+1, total, uploadCaps[conn.Domain], counters)
+				if onValid != nil {
+					if snapshot, ok := c.validMTUConnectionSnapshot(idx); ok {
+						onValid(snapshot)
+					}
 				}
 			}
 			done <- struct{}{}
@@ -1505,6 +1517,14 @@ func (c *Client) scanConnectionsWithoutPreknownMTU(ctx context.Context) int {
 	}
 	for _, idx := range indices {
 		c.prepareConnectionMTUScanState(&c.connections[idx])
+	}
+
+	// Scale-audit F1b: dead resolvers skip the binary-search pass. State was
+	// already reset above, so filtered connections stay invalid. Gated to
+	// large fleets inside the pre-filter; small fleets are unchanged.
+	indices = c.prefilterLiveConnections(ctx, indices)
+	if len(indices) == 0 {
+		return 0
 	}
 
 	uploadCaps := c.precomputeUploadCaps()
