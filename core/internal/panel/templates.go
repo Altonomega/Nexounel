@@ -30,6 +30,8 @@ button:hover,.btn:hover{background:#1a44a0}
 pre{background:#1c2333;color:#e8ecf4;padding:14px;border-radius:4px;overflow:auto;font-size:13px}
 .card{background:#fff;border:1px solid #ddd;border-radius:6px;padding:16px;margin:14px 0}
 footer{padding:16px 22px;color:#666;font-size:13px}
+.muted{color:#666;font-size:13px}
+form.inline{display:inline}
 `
 
 const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
@@ -44,7 +46,7 @@ const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
 <body>
 <header><h1>Nexounel Panel</h1></header>
 {{if .Authenticated}}<nav>
-<a href="{{.WebPath}}/status">Status</a>
+<a href="{{.WebPath}}/status">Dashboard</a>
 <a href="{{.WebPath}}/wizard">Wizard</a>
 <a href="{{.WebPath}}/nodes">Nodes</a>
 <a href="{{.WebPath}}/logs">Logs</a>
@@ -71,11 +73,16 @@ const loginTemplate = `{{define "content"}}<h2>Log in</h2>
 <p><button type="submit">Log in</button></p>
 </form>{{end}}`
 
-const statusTemplate = `{{define "content"}}<h2>Status</h2>
+const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 {{if .Content.RestartNeeded}}<p class="warn">The node registry changed. Restart the server to apply the change. Existing sessions will drop.</p>{{end}}
 {{if .Content.RestartResult}}<p class="ok">{{.Content.RestartResult}}</p>{{end}}
 {{if .Content.ManualRestart}}<p class="warn">Automatic restart is unavailable here. Run this command on the mother server:<br><code>{{.Content.ManualRestart}}</code></p>{{end}}
-<div class="card"><h3>Server</h3>
+{{if .Content.ShownKey}}<div class="card"><h3>New node key (shown once)</h3>
+<p>Node: <code>{{.Content.ShownNodeID}}</code> &middot; Key fingerprint: <code class="mono">{{.Content.ShownFingerprint}}</code></p>
+<label for="shownkey">Node key (copy now; it will not be shown again)</label>
+<input type="text" id="shownkey" readonly value="{{.Content.ShownKey}}">
+<p class="muted">Deliver this key to the node before it can connect with it. Keys are never shown again and never logged.</p></div>{{end}}
+<div class="card"><h3>Tunnel / server health</h3>
 {{if .Content.Health.Up}}<p>Server: <strong>up</strong></p>{{else}}<p>Server: <strong>down</strong>{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}</p>{{end}}
 {{with .Content.Health.Details}}<p>Status: {{.Status}} &middot; Uptime: {{.UptimeSeconds}} seconds</p>
 {{if .Warnings}}<p>Warnings:</p><ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>{{end}}
@@ -83,16 +90,68 @@ const statusTemplate = `{{define "content"}}<h2>Status</h2>
 {{if .Monitoring}}<table><tr><th>Metric</th><th>Value</th><th>Unit</th></tr>{{range .Monitoring}}<tr><td>{{.Name}}</td><td>{{.Value}}</td><td>{{.Unit}}</td></tr>{{end}}</table>{{else}}<p>Metrics: unavailable</p>{{end}}
 {{else}}<p>Health details: unavailable</p>{{end}}
 <p>Prometheus metrics endpoint: {{if .Content.Health.MetricsAvailable}}available ({{.Content.Health.MetricsValueCount}} series){{else}}unavailable{{end}}</p>
+<p class="muted">Control socket: {{if .Content.Control.Configured}}{{if .Content.Control.Reachable}}configured and reachable{{else}}configured but unreachable{{end}}{{else}}not configured{{end}} &middot; Server config: {{if .Content.ConfigFiles.ServerPresent}}{{if .Content.ConfigFiles.ServerParseable}}present and parseable{{else}}present but unparseable{{end}}{{else}}missing{{end}} &middot; Node config: {{if .Content.ConfigFiles.NodePresent}}{{if .Content.ConfigFiles.NodeParseable}}present and parseable{{else}}present but unparseable{{end}}{{else}}missing{{end}}</p>
+{{if .Content.ConfigFiles.ServerError}}<p class="muted">Server config: {{.Content.ConfigFiles.ServerError}}</p>{{end}}
+{{if .Content.ConfigFiles.NodeError}}<p class="muted">Node config: {{.Content.ConfigFiles.NodeError}}</p>{{end}}
 </div>
+<div class="card"><h3>Live sessions</h3>
+{{if .Content.SessionsNote}}<p>{{.Content.SessionsNote}}</p>{{else}}
+{{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}}</td><td>{{.DownloadMTU}}</td><td>{{.ActiveStreams}}</td><td>{{.LastActivity}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}
+{{end}}</div>
 <div class="card"><h3>Nodes</h3>
 {{if .Content.RegistryError}}<p>Registry: unavailable ({{.Content.RegistryError}})</p>{{else}}
 <table><tr><th>Node</th><th>Key fingerprint</th></tr>{{range .Content.Nodes}}<tr><td>{{.ID}}</td><td class="mono">{{.Fingerprint}}</td></tr>{{end}}</table>
 {{end}}</div>
-<div class="card"><h3>Resolver health</h3>
-{{if .Content.Resolver.Available}}<p>Source: <code>{{.Content.Resolver.SourceFile}}</code></p>
+<div class="card"><h3>Resolver fleet</h3>
+{{if .Content.Resolver.Available}}<p>Source: <code>{{.Content.Resolver.SourceFile}}</code> &middot; {{len .Content.Resolver.Entries}} resolvers in {{len .Content.Resolver.Classes}} download-MTU classes</p>
 {{if .Content.Resolver.Classes}}<table><tr><th>Download MTU class</th><th>Smallest upload MTU</th><th>Resolvers</th></tr>{{range .Content.Resolver.Classes}}<tr><td>{{.DownloadMTU}}</td><td>{{.UploadMTU}}</td><td>{{.Count}}</td></tr>{{end}}</table>{{end}}
 <table><tr><th>Resolver</th><th>Upload MTU</th><th>Download MTU</th><th>Last seen</th></tr>{{range .Content.Resolver.Entries}}<tr><td>{{.IP}}:{{.Port}}</td><td>{{.UploadMTU}}</td><td>{{.DownloadMTU}}</td><td>{{.LastSeen}}</td></tr>{{end}}</table>
 {{else}}<p>Resolver health: unavailable ({{.Content.Resolver.Note}})</p>{{end}}</div>
+<div class="card"><h3>Compression</h3>
+<p>Dictionary version: <code>{{.Content.Compression.DictionaryVersion}}</code> &middot; Upload dictionary ID: {{.Content.Compression.UploadDictionaryID}} &middot; Download dictionary ID: {{.Content.Compression.DownloadDictionaryID}}</p>
+<table><tr><th>Side</th><th>Dictionary</th><th>Level</th><th>Long window</th></tr>
+<tr><td>Server</td><td>{{if .Content.Compression.Server.Available}}{{if .Content.Compression.Server.DictEnabled}}enabled{{else}}disabled{{end}}{{else}}unavailable ({{.Content.Compression.Server.Note}}){{end}}</td><td>{{if .Content.Compression.Server.Available}}{{.Content.Compression.Server.Level}}{{else}}&mdash;{{end}}</td><td>{{if .Content.Compression.Server.Available}}{{if .Content.Compression.Server.LongEnabled}}enabled{{else}}disabled{{end}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>Node</td><td>{{if .Content.Compression.Node.Available}}{{if .Content.Compression.Node.DictEnabled}}enabled{{else}}disabled{{end}}{{else}}unavailable ({{.Content.Compression.Node.Note}}){{end}}</td><td>{{if .Content.Compression.Node.Available}}{{.Content.Compression.Node.Level}}{{else}}&mdash;{{end}}</td><td>{{if .Content.Compression.Node.Available}}{{if .Content.Compression.Node.LongEnabled}}enabled{{else}}disabled{{end}}{{else}}&mdash;{{end}}</td></tr></table>
+{{if .Content.Compression.Warning}}<p class="warn"><strong>Symmetric-enablement warning:</strong> {{.Content.Compression.Warning}}</p>{{end}}
+<p class="muted">Dictionary frames require symmetric enablement: a peer without dictionaries enabled drops dictionary frames. Level 0 keeps the legacy encoder; level 9 is the measured knee. The long window showed no measured gain; keep it off unless a field test proves otherwise.</p>
+<form method="post" action="{{.WebPath}}/compression">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label><input type="checkbox" name="dict_enabled" value="yes"{{if .Content.Compression.Server.DictEnabled}} checked{{end}}> Enable dictionary compression (both sides)</label>
+<label for="zstd-level">Zstd level (0&ndash;22, both sides)</label>
+<input type="number" id="zstd-level" name="zstd_level" value="{{if .Content.Compression.Server.Available}}{{.Content.Compression.Server.Level}}{{else}}0{{end}}" min="0" max="22">
+<label><input type="checkbox" name="long_enabled" value="yes"{{if .Content.Compression.Server.LongEnabled}} checked{{end}}> Enable long window (both sides)</label>
+<p class="muted">Writes only the three ZSTD_* lines in each config file (previous versions kept as .bak). The setting takes effect only after restarting the server and the node service.</p>
+<label><input type="checkbox" name="confirm" value="yes" required> I understand both sides must match and both processes must restart.</label>
+<p><button type="submit">Apply compression settings</button></p>
+</form></div>
+<div class="card"><h3>Registry (live control)</h3>
+<p>Control socket: {{if .Content.Control.Configured}}{{if .Content.Control.Reachable}}reachable — changes apply without a restart{{else}}configured but unreachable — changes are written to the registry file; restart the server to apply them{{end}}{{else}}not configured — changes are written to the registry file; restart the server to apply them{{end}}</p>
+<form method="post" action="{{.WebPath}}/registry/reload" class="inline">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button type="submit">Reload registry (live)</button>
+</form>
+<form method="post" action="{{.WebPath}}/registry/add" class="inline">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label for="ra-node">Node ID</label>
+<input type="text" id="ra-node" name="node_id" required>
+<label for="ra-key">Key (leave empty to generate one, shown once)</label>
+<input type="text" id="ra-key" name="key" autocomplete="off">
+<button type="submit">Add node</button>
+</form>
+<form method="post" action="{{.WebPath}}/registry/remove" class="inline">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label for="rr-node">Node ID</label>
+<input type="text" id="rr-node" name="node_id" required>
+<label><input type="checkbox" name="confirm" value="yes" required> confirm removal</label>
+<button type="submit">Remove node</button>
+</form>
+<form method="post" action="{{.WebPath}}/registry/rotate" class="inline">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label for="ro-node">Node ID</label>
+<input type="text" id="ro-node" name="node_id" required>
+<button type="submit">Rotate key (shown once)</button>
+</form>
+<p class="muted">Rotation only changes the registry. Deliver the new key to the node from <a href="{{.WebPath}}/nodes">Nodes</a> (rotate/deliver) before the node can connect with it.</p></div>
 <div class="card"><h3>Apply registry changes</h3>
 <p>Restarting the server drops existing sessions. Confirm to proceed.</p>
 <form method="post" action="{{.WebPath}}/restart-server">
@@ -100,6 +159,9 @@ const statusTemplate = `{{define "content"}}<h2>Status</h2>
 <label><input type="checkbox" name="confirm" value="yes" required> I understand existing sessions will drop.</label>
 <p><button type="submit">Apply &amp; restart server</button></p>
 </form></div>
+<div class="card"><h3>More</h3>
+<p><a href="{{.WebPath}}/wizard">Setup wizard</a> &middot; <a href="{{.WebPath}}/nodes">Nodes</a> &middot; <a href="{{.WebPath}}/logs">Logs</a> &middot; <a href="{{.WebPath}}/jobs">Jobs</a></p>
+<p class="muted">The JSON agent API lives under the same secret path at /api/* and uses the same session authentication. See docs/PANEL-AGENT-API.md.</p></div>
 {{end}}`
 
 const logsTemplate = `{{define "content"}}<h2>Logs</h2>

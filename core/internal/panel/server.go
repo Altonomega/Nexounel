@@ -38,6 +38,14 @@ type Server struct {
 	runner         CommandRunner
 	factoryForAddr func(addr string) TransportFactory
 	syncJobs       bool
+
+	// Control-socket seams for tests. controlSocketPathOverride, when
+	// non-nil, replaces the path resolved from the server config file
+	// (an empty override forces "not configured"). controlClientFactory,
+	// when set, builds the control client for a socket path (a fake
+	// socket server in tests).
+	controlSocketPathOverride *string
+	controlClientFactory      func(socketPath string) controlClient
 }
 
 // NewServer builds a panel server from a loaded config.
@@ -94,6 +102,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.generic404(w, r)
 		return
 	}
+	// The JSON agent API lives under the same secret path and the same
+	// session authentication as the UI, but with JSON error semantics
+	// (401/404 JSON, never a redirect). Unknown /api/* paths are 404
+	// JSON without an auth check, matching the generic 404 outside
+	// the secret path.
+	if sub := s.subPath(r.URL.Path); sub == "/api" || strings.HasPrefix(sub, "/api/") {
+		s.handleAPI(w, r)
+		return
+	}
 	switch s.subPath(r.URL.Path) {
 	case "/", "":
 		s.requireAuth(http.HandlerFunc(s.handleRoot)).ServeHTTP(w, r)
@@ -105,6 +122,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(http.HandlerFunc(s.handleStatus)).ServeHTTP(w, r)
 	case "/restart-server":
 		s.requireAuth(http.HandlerFunc(s.handleRestartServer)).ServeHTTP(w, r)
+	case "/compression":
+		s.requireAuth(http.HandlerFunc(s.handleCompressionSettings)).ServeHTTP(w, r)
+	case "/registry/reload":
+		s.requireAuth(http.HandlerFunc(s.handleRegistryReload)).ServeHTTP(w, r)
+	case "/registry/add":
+		s.requireAuth(http.HandlerFunc(s.handleRegistryAdd)).ServeHTTP(w, r)
+	case "/registry/remove":
+		s.requireAuth(http.HandlerFunc(s.handleRegistryRemove)).ServeHTTP(w, r)
+	case "/registry/rotate":
+		s.requireAuth(http.HandlerFunc(s.handleRegistryRotate)).ServeHTTP(w, r)
 	case "/logs":
 		s.requireAuth(http.HandlerFunc(s.handleLogs)).ServeHTTP(w, r)
 	case "/wizard":
@@ -296,6 +323,23 @@ type statusContent struct {
 	RestartNeeded bool
 	RestartResult string
 	ManualRestart string
+
+	// Dashboard sections, loaded by the shared service layer (see
+	// service.go) and rendered by the dashboard template. The JSON
+	// API serialises the same values.
+	Control      ControlSocketState
+	Sessions     []SessionView
+	SessionsNote string
+	Compression  CompressionStatus
+	ConfigFiles  ConfigFileState
+
+	// ShownKey carries a freshly generated node key for exactly one
+	// render (add/rotate with a generated key). It is never stored
+	// server-side beyond the registry write. ShownNodeID names the
+	// node it belongs to; ShownFingerprint is its key fingerprint.
+	ShownKey         string
+	ShownNodeID      string
+	ShownFingerprint string
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -305,24 +349,25 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.sessionFromRequest(r)
-	health := FetchServerHealth(r.Context(), s.cfg.MetricsAddr, s.httpClient)
-	nodes, regErr := ListRegistryNodes(s.cfg.RegistryFile)
-	resolver := LoadNodeResolverHealth(s.cfg.NodeConfig)
+	content := s.loadDashboard(r.Context())
 	s.restartMu.Lock()
-	needed, result, manual := s.restartNeeded, s.restartResult, s.manualRestart
+	content.RestartResult, content.ManualRestart = s.restartResult, s.manualRestart
 	s.restartResult, s.manualRestart = "", ""
 	s.restartMu.Unlock()
-	data := s.pageData(r, sess, "Status")
-	data.Content = statusContent{
-		Health: health, Nodes: nodes, Resolver: resolver,
-		RestartNeeded: needed, RestartResult: result, ManualRestart: manual,
-	}
-	if regErr != nil {
-		data.Content = statusContent{
-			Health: health, Resolver: resolver, RegistryError: regErr.Error(),
-			RestartNeeded: needed, RestartResult: result, ManualRestart: manual,
-		}
-	}
+	data := s.pageData(r, sess, "Dashboard")
+	data.Content = content
+	s.render(w, r, "status", data)
+}
+
+// renderDashboard renders the dashboard with caller-supplied content
+// plus an optional error or message banner (used by the dashboard
+// POST handlers, which re-render instead of redirecting so a
+// shown-once key survives exactly one render).
+func (s *Server) renderDashboard(w http.ResponseWriter, r *http.Request, sess *Session, content statusContent, errMsg, message string) {
+	data := s.pageData(r, sess, "Dashboard")
+	data.Error = errMsg
+	data.Message = message
+	data.Content = content
 	s.render(w, r, "status", data)
 }
 
@@ -337,7 +382,7 @@ func (s *Server) handleRestartServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("confirm") != "yes" {
-		data := s.pageData(r, sess, "Status")
+		data := s.pageData(r, sess, "Dashboard")
 		data.Error = "Restart requires confirmation."
 		s.render(w, r, "status", dataWithContent(data, s.statusContentFor(r)))
 		return
@@ -368,17 +413,7 @@ func (s *Server) handleRestartServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) statusContentFor(r *http.Request) statusContent {
-	health := FetchServerHealth(r.Context(), s.cfg.MetricsAddr, s.httpClient)
-	nodes, regErr := ListRegistryNodes(s.cfg.RegistryFile)
-	resolver := LoadNodeResolverHealth(s.cfg.NodeConfig)
-	content := statusContent{Health: health, Nodes: nodes, Resolver: resolver}
-	if regErr != nil {
-		content.RegistryError = regErr.Error()
-	}
-	s.restartMu.Lock()
-	content.RestartNeeded = s.restartNeeded
-	s.restartMu.Unlock()
-	return content
+	return s.loadDashboard(r.Context())
 }
 
 type logsContent struct {
