@@ -75,3 +75,12 @@ MAX_INGRESS_QUEUE_BYTES = 67108864
 # FEC_PARITY = 4
 
 LOG_LEVEL = "INFO"
+
+# ARQ repair experiment (docs/ARQ-PROTOTYPE.md). All off by default.
+# When ARQ_EXPERIMENT_ENABLED is true, an unset ARQ_DATA_NACK_MAX_GAP
+# means 64 (server-side gap-triggered NACKs for the upload direction)
+# and an unset ARQ_RETRANSMIT_BUDGET means 64 retransmits per RTO tick.
+# The experiment never changes the wire format.
+# ARQ_EXPERIMENT_ENABLED = false
+# ARQ_DATA_NACK_MAX_GAP = 0
+# ARQ_RETRANSMIT_BUDGET = 0

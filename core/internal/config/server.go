@@ -302,6 +302,19 @@ type ServerConfig struct {
 	ARQDataNackRepeatSeconds       float64 `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
 	ARQTerminalDrainTimeoutSec     float64 `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
 	ARQTerminalAckWaitTimeoutSec   float64 `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
+	// ARQExperimentEnabled is the master switch for the ARQ repair
+	// experiment (docs/ARQ-PROTOTYPE.md). Off by default; when off,
+	// the experiment keys below are inert and repair behavior is
+	// exactly the historical one. When on, an unset server NACK gap
+	// (ARQ_DATA_NACK_MAX_GAP == 0) means 64: the server starts
+	// sending gap-triggered NACKs for the upload direction instead
+	// of relying on RTO resends alone. An explicit 0 cannot be
+	// expressed while the experiment is on; turn the experiment off
+	// to force NACKs off.
+	ARQExperimentEnabled bool `toml:"ARQ_EXPERIMENT_ENABLED"`
+	// ARQRetransmitBudget caps overdue data retransmits per RTO tick.
+	// 0 (default) means unlimited; under the experiment, 0 means 64.
+	ARQRetransmitBudget int `toml:"ARQ_RETRANSMIT_BUDGET"`
 }
 
 type ServerConfigOverrides struct {
@@ -818,11 +831,18 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.ARQDataPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataPacketTTLSeconds, 1800.0), 30.0, 86400.0)
 	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 900.0), 30.0, 86400.0)
 	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 800), 60, 100000)
+	// Experiment: an unset NACK gap becomes 64, enabling server-side
+	// gap-triggered NACKs. This runs before the clamp so the value
+	// still honors the window/4 ceiling below.
+	if cfg.ARQExperimentEnabled && cfg.ARQDataNackMaxGap == 0 {
+		cfg.ARQDataNackMaxGap = 64
+	}
 	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, cfg.ARQWindowSize/4)
 	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.2, 30.0)
 	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.3, 30.0)
 	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
 	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
+	cfg.ARQRetransmitBudget = clampInt(cfg.ARQRetransmitBudget, 0, 1024)
 
 	return cfg, nil
 }

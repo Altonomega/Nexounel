@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -190,6 +191,11 @@ type ARQ struct {
 	maxDataRetries       int
 	terminalDrainTimeout time.Duration
 	terminalAckWait      time.Duration
+	// retransmitBudget caps how many overdue data items one
+	// checkRetransmits tick may re-enqueue, oldest first. Zero means
+	// unlimited (the historical behavior). It is only ever nonzero
+	// when the ARQ experiment flag is on; see Config.
+	retransmitBudget int
 
 	// Control-plane tuning
 	enableControlReliability bool
@@ -302,6 +308,15 @@ type Config struct {
 	CompressionType             uint8
 	IsClient                    bool
 	InboundQueueSize            int
+	// ExperimentEnabled is the master switch for the ARQ repair
+	// experiment (docs/ARQ-PROTOTYPE.md). When false, every experiment
+	// knob below is inert and behavior is byte-for-byte the historical
+	// one. It never changes the wire format.
+	ExperimentEnabled bool
+	// RetransmitBudget caps overdue data retransmits per tick (oldest
+	// first). It applies only when ExperimentEnabled is true; a value
+	// <= 0 under the experiment means the default budget (64).
+	RetransmitBudget int
 }
 
 type CloseOptions struct {
@@ -376,6 +391,7 @@ func NewARQ(streamID uint16, sessionID uint16, enqueuer PacketEnqueuer, localCon
 		dataNackMaxGap:           maxI(0, cfg.DataNackMaxGap),
 		dataNackInitialDelay:     time.Duration(maxF(0.0, cfg.DataNackInitialDelaySeconds) * float64(time.Second)),
 		dataNackRepeatInterval:   time.Duration(maxF(0.1, cfg.DataNackRepeatSeconds) * float64(time.Second)),
+		retransmitBudget:         resolveRetransmitBudget(cfg),
 
 		isVirtual:         cfg.IsVirtual,
 		compressionType:   cfg.CompressionType,
@@ -546,7 +562,24 @@ const (
 	dataRetransmitRTOGrowthFactor    = 1.35
 	controlRetransmitRTOGrowthFactor = 1.25
 	setupControlRTOGrowthFactor      = 1.15
+	// defaultExperimentRetransmitBudget is the per-tick RTO retransmit
+	// cap when the ARQ experiment is on and no explicit budget is set.
+	defaultExperimentRetransmitBudget = 64
 )
+
+// resolveRetransmitBudget turns the experiment configuration into the
+// effective per-tick cap: unlimited (0) unless the experiment is on,
+// in which case an explicit positive budget wins and anything else
+// means the default budget.
+func resolveRetransmitBudget(cfg Config) int {
+	if !cfg.ExperimentEnabled {
+		return 0
+	}
+	if cfg.RetransmitBudget > 0 {
+		return cfg.RetransmitBudget
+	}
+	return defaultExperimentRetransmitBudget
+}
 
 // ---------------------------------------------------------------------
 // Flow Control & Shared State Helpers
@@ -2153,6 +2186,7 @@ func (a *ARQ) checkRetransmits() {
 	var jobs []rtxJob
 	var ttlExpired bool
 	var retryExceeded bool
+	sndNxt := a.sndNxt
 
 	for sn, info := range a.sndBuf {
 		if info.TTL > 0 {
@@ -2185,6 +2219,21 @@ func (a *ARQ) checkRetransmits() {
 	if retryExceeded {
 		a.Close("Max retransmissions exceeded", CloseOptions{SendRST: true})
 		return
+	}
+
+	// Experiment: cap the work of one tick. The survivors are the
+	// oldest unacknowledged items — greatest distance from sndNxt
+	// under uint16 wraparound, which is "lowest sequence number
+	// first" in stream order. The rest stay overdue in sndBuf and are
+	// reconsidered on the next tick, so nothing is starved: the
+	// deferred tail is the newest, and it ages into the front.
+	// With the experiment off the budget is zero and this block is
+	// dead code: every due job is enqueued exactly as before.
+	if a.retransmitBudget > 0 && len(jobs) > a.retransmitBudget {
+		sort.Slice(jobs, func(i, j int) bool {
+			return sndNxt-jobs[i].sn > sndNxt-jobs[j].sn
+		})
+		jobs = jobs[:a.retransmitBudget]
 	}
 
 	priorityKinds := a.retransmitPriorityKinds(jobs)

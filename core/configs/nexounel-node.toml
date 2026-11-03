@@ -55,3 +55,14 @@ CAPACITY_MARGIN = 0.95
 QUERY_TYPES = ["TXT", "NULL", "HTTPS", "SVCB", "A", "AAAA"]
 
 LOG_LEVEL = "INFO"
+
+# ARQ repair experiment (docs/ARQ-PROTOTYPE.md). All off by default.
+# When ARQ_EXPERIMENT_ENABLED is true, RESEND and ACK/NACK packets are
+# sent once instead of at the configured duplication counts (override
+# with ARQ_RESEND_DUPLICATION_COUNT / ARQ_ACK_NACK_DUPLICATION_COUNT),
+# and an unset ARQ_RETRANSMIT_BUDGET means 64 retransmits per RTO tick.
+# The experiment never changes the wire format.
+# ARQ_EXPERIMENT_ENABLED = false
+# ARQ_RESEND_DUPLICATION_COUNT = 0
+# ARQ_ACK_NACK_DUPLICATION_COUNT = 0
+# ARQ_RETRANSMIT_BUDGET = 0

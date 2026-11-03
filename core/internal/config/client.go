@@ -307,29 +307,45 @@ type ClientConfig struct {
 	// TerminalUI selects the client console presentation. "auto" uses the
 	// interactive dashboard only on a terminal; "tui" forces it and "plain"
 	// retains line-oriented logs for services, redirection, and integrations.
-	TerminalUI                     string            `toml:"TERMINAL_UI"`
-	StartupMode                    string            `toml:"STARTUP_MODE"`
-	LogScanMaxDays                 int               `toml:"LOG_SCAN_MAX_DAYS"`
-	LogScanMaxResolvers            int               `toml:"LOG_SCAN_MAX_RESOLVERS"`
-	LogBasedMTUVerify              bool              `toml:"LOG_BASED_MTU_VERIFY"`
-	MaxPacketsPerBatch             int               `toml:"MAX_PACKETS_PER_BATCH"`
-	ARQWindowSize                  int               `toml:"ARQ_WINDOW_SIZE"`
-	ARQInitialRTOSeconds           float64           `toml:"ARQ_INITIAL_RTO_SECONDS"`
-	ARQMaxRTOSeconds               float64           `toml:"ARQ_MAX_RTO_SECONDS"`
-	ARQControlInitialRTOSeconds    float64           `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
-	ARQControlMaxRTOSeconds        float64           `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
-	ARQMaxControlRetries           int               `toml:"ARQ_MAX_CONTROL_RETRIES"`
-	ARQInactivityTimeoutSeconds    float64           `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
-	ARQDataPacketTTLSeconds        float64           `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
-	ARQControlPacketTTLSeconds     float64           `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
-	ARQMaxDataRetries              int               `toml:"ARQ_MAX_DATA_RETRIES"`
-	ARQDataNackMaxGap              int               `toml:"ARQ_DATA_NACK_MAX_GAP"`
-	ARQDataNackInitialDelaySeconds float64           `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
-	ARQDataNackRepeatSeconds       float64           `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
-	ARQTerminalDrainTimeoutSec     float64           `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
-	ARQTerminalAckWaitTimeoutSec   float64           `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
-	Resolvers                      []ResolverAddress `toml:"-"`
-	ResolverMap                    map[string]int    `toml:"-"`
+	TerminalUI                     string  `toml:"TERMINAL_UI"`
+	StartupMode                    string  `toml:"STARTUP_MODE"`
+	LogScanMaxDays                 int     `toml:"LOG_SCAN_MAX_DAYS"`
+	LogScanMaxResolvers            int     `toml:"LOG_SCAN_MAX_RESOLVERS"`
+	LogBasedMTUVerify              bool    `toml:"LOG_BASED_MTU_VERIFY"`
+	MaxPacketsPerBatch             int     `toml:"MAX_PACKETS_PER_BATCH"`
+	ARQWindowSize                  int     `toml:"ARQ_WINDOW_SIZE"`
+	ARQInitialRTOSeconds           float64 `toml:"ARQ_INITIAL_RTO_SECONDS"`
+	ARQMaxRTOSeconds               float64 `toml:"ARQ_MAX_RTO_SECONDS"`
+	ARQControlInitialRTOSeconds    float64 `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
+	ARQControlMaxRTOSeconds        float64 `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
+	ARQMaxControlRetries           int     `toml:"ARQ_MAX_CONTROL_RETRIES"`
+	ARQInactivityTimeoutSeconds    float64 `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
+	ARQDataPacketTTLSeconds        float64 `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
+	ARQControlPacketTTLSeconds     float64 `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
+	ARQMaxDataRetries              int     `toml:"ARQ_MAX_DATA_RETRIES"`
+	ARQDataNackMaxGap              int     `toml:"ARQ_DATA_NACK_MAX_GAP"`
+	ARQDataNackInitialDelaySeconds float64 `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
+	ARQDataNackRepeatSeconds       float64 `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
+	ARQTerminalDrainTimeoutSec     float64 `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
+	ARQTerminalAckWaitTimeoutSec   float64 `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
+	// ARQExperimentEnabled is the master switch for the ARQ repair
+	// experiment (docs/ARQ-PROTOTYPE.md). Off by default; when off,
+	// the experiment keys below are inert and repair behavior is
+	// exactly the historical one.
+	ARQExperimentEnabled bool `toml:"ARQ_EXPERIMENT_ENABLED"`
+	// ARQResendDuplicationCount overrides the duplication count of
+	// PACKET_STREAM_RESEND only. 0 (default) means inherit the upload
+	// data count; under the experiment, 0 means 1.
+	ARQResendDuplicationCount int `toml:"ARQ_RESEND_DUPLICATION_COUNT"`
+	// ARQAckNackDuplicationCount overrides the duplication count of
+	// DATA_ACK/DATA_NACK only. 0 (default) means inherit the download
+	// data count; under the experiment, 0 means 1.
+	ARQAckNackDuplicationCount int `toml:"ARQ_ACK_NACK_DUPLICATION_COUNT"`
+	// ARQRetransmitBudget caps overdue data retransmits per RTO tick.
+	// 0 (default) means unlimited; under the experiment, 0 means 64.
+	ARQRetransmitBudget int               `toml:"ARQ_RETRANSMIT_BUDGET"`
+	Resolvers           []ResolverAddress `toml:"-"`
+	ResolverMap         map[string]int    `toml:"-"`
 	// QUERY_TYPES is the set of DNS record types the client rotates over when
 	// building tunnel queries (A1, DPI-resistance). Names are case-insensitive,
 	// e.g. ["TXT", "CNAME", "A", "AAAA"]. Empty / unset preserves the historical
@@ -931,6 +947,11 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.08, 30.0)
 	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
 	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
+	// Experiment keys: 0 keeps the historical meaning (inherit /
+	// unlimited). Negative values are not meaningful and clamp to 0.
+	cfg.ARQResendDuplicationCount = clampInt(cfg.ARQResendDuplicationCount, 0, 8)
+	cfg.ARQAckNackDuplicationCount = clampInt(cfg.ARQAckNackDuplicationCount, 0, 8)
+	cfg.ARQRetransmitBudget = clampInt(cfg.ARQRetransmitBudget, 0, 1024)
 
 	if cfg.MinUploadMTU < 0 || cfg.MinDownloadMTU < 0 || cfg.MaxUploadMTU < 0 || cfg.MaxDownloadMTU < 0 {
 		return cfg, fmt.Errorf("mtu values cannot be negative")

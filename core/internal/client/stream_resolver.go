@@ -75,6 +75,28 @@ func (c *Client) runtimePacketDuplicationCount(packetType uint8) int {
 		count = uploadData
 	}
 
+	// ARQ experiment: pin the duplication of repair packets (RESEND)
+	// and repair signals (DATA_ACK / DATA_NACK). An explicit key wins;
+	// otherwise the experiment default is 1. The pinned value still
+	// honors a server-advertised ceiling, and adaptive duplication
+	// plus the FEC clamp are skipped for pinned packets: the
+	// experiment arm must measure the pinned count, not a loss-driven
+	// one. DATA, setup, and PING counts are untouched.
+	if c.cfg.ARQExperimentEnabled {
+		switch packetType {
+		case Enums.PACKET_STREAM_RESEND:
+			if c.cfg.ARQResendDuplicationCount > 0 {
+				return c.experimentDuplicationCount(c.cfg.ARQResendDuplicationCount)
+			}
+			return c.experimentDuplicationCount(1)
+		case Enums.PACKET_STREAM_DATA_ACK, Enums.PACKET_STREAM_DATA_NACK:
+			if c.cfg.ARQAckNackDuplicationCount > 0 {
+				return c.experimentDuplicationCount(c.cfg.ARQAckNackDuplicationCount)
+			}
+			return c.experimentDuplicationCount(1)
+		}
+	}
+
 	if count < 1 {
 		count = 1
 	}
@@ -87,6 +109,21 @@ func (c *Client) runtimePacketDuplicationCount(packetType uint8) int {
 	if (packetType == Enums.PACKET_STREAM_DATA_ACK || packetType == Enums.PACKET_STREAM_DATA_NACK) &&
 		c.fecRecentlyActive() && count > 2 {
 		count = 2
+	}
+	return count
+}
+
+// experimentDuplicationCount applies the server-advertised duplication
+// ceiling to an experiment-pinned count. The ceiling only ever lowers
+// a count, so the pinned default of 1 is unaffected by any ceiling
+// of 1 or more; an explicit key above the ceiling is capped like
+// every other count.
+func (c *Client) experimentDuplicationCount(count int) int {
+	if policy := c.serverPolicySnapshot(); policy != nil {
+		count = policyMaxInt(count, policy.MaxPacketDuplicationCount)
+	}
+	if count < 1 {
+		count = 1
 	}
 	return count
 }

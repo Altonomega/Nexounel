@@ -388,3 +388,84 @@ func TestSelectTargetConnectionsForPacketUsesDownloadDuplicationForAcks(t *testi
 		t.Fatalf("data selected count: got=%d want=1", len(dataSelected))
 	}
 }
+
+// TestRuntimePacketDuplicationCountExperiment pins the ARQ repair
+// experiment (docs/ARQ-PROTOTYPE.md): with the master flag off, the
+// experiment keys are inert and counts are exactly the historical
+// ones; with the flag on, RESEND and ACK/NACK default to 1, explicit
+// keys win, and DATA/setup/PING counts are untouched.
+func TestRuntimePacketDuplicationCountExperiment(t *testing.T) {
+	base := func() config.ClientConfig {
+		return config.ClientConfig{
+			UploadPacketDuplicationCount:   3,
+			DownloadPacketDuplicationCount: 7,
+		}
+	}
+
+	t.Run("off ignores experiment keys", func(t *testing.T) {
+		cfg := base()
+		cfg.ARQResendDuplicationCount = 2
+		cfg.ARQAckNackDuplicationCount = 5
+		c := buildTestClientWithResolvers(cfg, "a", "b", "c", "d")
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_RESEND); got != 3 {
+			t.Fatalf("resend off: got=%d want=3 (upload data count)", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_ACK); got != 7 {
+			t.Fatalf("ack off: got=%d want=7 (download data count)", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_NACK); got != 7 {
+			t.Fatalf("nack off: got=%d want=7 (download data count)", got)
+		}
+	})
+
+	t.Run("on defaults repair counts to one", func(t *testing.T) {
+		cfg := base()
+		cfg.ARQExperimentEnabled = true
+		c := buildTestClientWithResolvers(cfg, "a", "b", "c", "d")
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_RESEND); got != 1 {
+			t.Fatalf("resend on: got=%d want=1", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_ACK); got != 1 {
+			t.Fatalf("ack on: got=%d want=1", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_NACK); got != 1 {
+			t.Fatalf("nack on: got=%d want=1", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA); got != 3 {
+			t.Fatalf("data on: got=%d want=3 (untouched)", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_SYN); got != 3 {
+			t.Fatalf("setup on: got=%d want=3 (untouched)", got)
+		}
+	})
+
+	t.Run("on honors explicit keys", func(t *testing.T) {
+		cfg := base()
+		cfg.ARQExperimentEnabled = true
+		cfg.ARQResendDuplicationCount = 2
+		cfg.ARQAckNackDuplicationCount = 5
+		c := buildTestClientWithResolvers(cfg, "a", "b", "c", "d")
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_RESEND); got != 2 {
+			t.Fatalf("resend explicit: got=%d want=2", got)
+		}
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_ACK); got != 5 {
+			t.Fatalf("ack explicit: got=%d want=5", got)
+		}
+	})
+
+	t.Run("on honors server ceiling for explicit keys", func(t *testing.T) {
+		c := &Client{cfg: base()}
+		c.cfg.ARQExperimentEnabled = true
+		c.cfg.ARQResendDuplicationCount = 5
+		c.serverPolicy.Store(&VpnProto.SessionAcceptClientPolicy{
+			MaxPacketDuplicationCount: 2,
+		})
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_RESEND); got != 2 {
+			t.Fatalf("resend explicit above ceiling: got=%d want=2", got)
+		}
+		// The pinned default of 1 is below every ceiling.
+		if got := c.runtimePacketDuplicationCount(Enums.PACKET_STREAM_DATA_ACK); got != 1 {
+			t.Fatalf("ack default under ceiling: got=%d want=1", got)
+		}
+	})
+}
