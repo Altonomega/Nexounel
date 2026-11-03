@@ -167,6 +167,12 @@ type ServerConfig struct {
 	MaxAllowedClientARQWindowSize          int     `toml:"MAX_ALLOWED_CLIENT_ARQ_WINDOW_SIZE"`
 	MaxAllowedClientARQDataNackMaxGap      int     `toml:"MAX_ALLOWED_CLIENT_ARQ_DATA_NACK_MAX_GAP"`
 	MinAllowedClientCompressionMinSize     int     `toml:"MIN_ALLOWED_CLIENT_COMPRESSION_MIN_SIZE"`
+	// Throughput pack: zstd dictionary/level/long settings, mirroring
+	// the client keys. Dictionary frames require symmetric enablement
+	// on both ends; all default to the legacy encoder behavior.
+	ZSTDDictEnabled bool `toml:"ZSTD_DICT_ENABLED"`
+	ZSTDLevel       int  `toml:"ZSTD_LEVEL"`
+	ZSTDLongEnabled bool `toml:"ZSTD_LONG_ENABLED"`
 	// Throughput pack (prototype, reserved): redundancy-elimination
 	// layer flags. Not yet wired on the server side; both default off.
 	REEnabled    bool `toml:"RE_ENABLED"`
@@ -379,6 +385,9 @@ func defaultServerConfig() ServerConfig {
 		MinVPNLabelLength:                 3,
 		SupportedUploadCompressionTypes:   []int{0, 1, 2, 3},
 		SupportedDownloadCompressionTypes: []int{0, 1, 2, 3},
+		ZSTDDictEnabled:                   false,
+		ZSTDLevel:                         0,
+		ZSTDLongEnabled:                   false,
 		REEnabled:                         false,
 		RECacheMaxMB:                      128,
 		ARecordDataDelivery:               true,
@@ -763,6 +772,12 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 
 	cfg.SupportedUploadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedUploadCompressionTypes)
 	cfg.SupportedDownloadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedDownloadCompressionTypes)
+	if cfg.ZSTDLevel < 0 {
+		cfg.ZSTDLevel = 0
+	}
+	if cfg.ZSTDLevel > 22 {
+		cfg.ZSTDLevel = 22
+	}
 	cfg.RECacheMaxMB = clampInt(defaultIntBelow(cfg.RECacheMaxMB, 1, 128), 1, 512)
 
 	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {

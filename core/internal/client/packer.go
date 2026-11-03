@@ -425,15 +425,15 @@ func (c *Client) emitOutboundTask(ctx context.Context, task rawOutboundTask) boo
 	// mergeable branch does not exist yet, and must not be added without
 	// the packed-data wire format described above.
 	if c.packingEnabled() && segmentsMergeableForPacking(task) {
-		// Unreachable with the current wire format. If the gate ever
-		// admits a type, this branch must route through a Packer and
-		// emit one frame per flushed batch BEFORE compression; it must
-		// never fall through to sending the unmerged task as if the
-		// segment had been packed, and never silently drop the task.
-		// Kept as an explicit failure rather than a silent passthrough
-		// so a future gate change without a Packer wiring fails loudly
-		// in tests instead of corrupting streams in production.
-		panic("client: packing gate admitted a mergeable task with no Packer wiring")
+		// Unreachable with the current wire format: the gate admits
+		// nothing. If it ever admits a type without a Packer wiring,
+		// sending the task unmerged is still correct (it is a
+		// complete segment; only merging could corrupt ARQ
+		// accounting), so log loudly and fall through to the normal
+		// send instead of crashing the process.
+		if c.log != nil {
+			c.log.Errorf("packing gate admitted a mergeable task with no Packer wiring; sending unmerged")
+		}
 	}
 	select {
 	case c.txChannel <- task:

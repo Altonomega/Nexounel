@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
@@ -58,6 +59,14 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "Server startup failed: %v\n", err)
 		os.Exit(1)
 	}
+	// Throughput pack: apply the zstd dictionary/level/long settings.
+	// Defaults reproduce the legacy encoder byte-for-byte; dictionary
+	// frames require the same settings on the node.
+	compression.Configure(compression.ZSTDOptions{
+		DictEnabled: cfg.ZSTDDictEnabled,
+		Level:       cfg.ZSTDLevel,
+		LongEnabled: cfg.ZSTDLongEnabled,
+	})
 	if *checkConfigFlag {
 		if len(cfg.Domain) == 0 {
 			fmt.Fprintln(os.Stderr, "Server configuration has no allowed domains")
