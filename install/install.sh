@@ -23,6 +23,14 @@
 # beyond the three well-known defaults below, and no unverified
 # mirror hostname is invented by this script.
 #
+# Offline bundle: a self-contained tarball
+# (nexounel-<version>-offline.tar.gz) built by
+# install/package-offline-bundle.sh contains install.sh, the binaries
+# for amd64 and arm64, units, logrotate config, sample configs, and a
+# SHA256SUMS file. Installing from a bundle with --tarball is fully
+# offline: no download, no curl, and the selected binaries are
+# verified against the bundle's SHA256SUMS before installation.
+#
 # Layout (overridable ONLY via --destdir for testing; --destdir ROOT
 # prefixes every path, including systemd units, and disables all
 # systemctl/service actions):
@@ -63,6 +71,12 @@ SOURCE_SHA256=""
 RELEASE_VERSION=""
 GO_VERSION="1.26.10"
 MIRROR_EXTRA=()
+
+# Set during acquisition: BINARY_ROOT is where the installable binaries
+# live inside the staging tree (the staging root for flat release
+# tarballs and source builds, or the per-architecture subdirectory
+# for offline bundles).
+BINARY_ROOT=""
 
 die() {
     printf 'error: %s\n' "$*" >&2
@@ -106,6 +120,11 @@ Options:
   --tarball PATH      Install from a local release tarball instead of
                       downloading one. Requires --sha256, or a sibling
                       <tarball>.sha256 file next to the tarball.
+                      An offline bundle (nexounel-<version>-offline.tar.gz)
+                      works here too and installs fully offline: no
+                      download and no curl; binaries for this host's
+                      architecture are picked from the bundle and
+                      verified against its SHA256SUMS.
   --sha256 HASH       Expected SHA-256 of the release tarball. Verifies
                       a local --tarball, and additionally pins a
                       downloaded tarball.
@@ -132,6 +151,7 @@ Examples:
   install.sh --mother --release v3.5.0
   install.sh --node --release v3.5.0 --non-interactive
   install.sh --mother --node --tarball /tmp/nexounel-v3.5.0-linux-amd64.tar.gz --sha256 <hash> --non-interactive
+  install.sh --mother --node --tarball /tmp/nexounel-v3.5.0-offline.tar.gz --sha256 <hash> --non-interactive
   install.sh --dry-run --mother
   install.sh --uninstall --non-interactive
 EOF
@@ -436,14 +456,17 @@ staging_root() {
 
 # Validate the staging contents required by the selected modes before
 # anything is installed. Missing files fail closed with the full list.
+# Binaries are checked under BINARY_ROOT (set by the acquisition step:
+# the staging root, or the per-arch subdirectory of an offline bundle);
+# configs, units, and logrotate are checked under the staging root.
 validate_staging() {
     local root="$1" missing=""
     if [ "$MODE_MOTHER" -eq 1 ]; then
-        [ -x "$root/nexounel-server" ] || missing="$missing nexounel-server"
-        [ -x "$root/nexounel-panel" ] || missing="$missing nexounel-panel"
+        [ -x "$BINARY_ROOT/nexounel-server" ] || missing="$missing nexounel-server"
+        [ -x "$BINARY_ROOT/nexounel-panel" ] || missing="$missing nexounel-panel"
     fi
     if [ "$MODE_NODE" -eq 1 ]; then
-        [ -x "$root/nexounel-node" ] || missing="$missing nexounel-node"
+        [ -x "$BINARY_ROOT/nexounel-node" ] || missing="$missing nexounel-node"
     fi
     if [ "$MODE_MOTHER" -eq 1 ]; then
         [ -f "$root/configs/nexounel-server.toml" ] || missing="$missing configs/nexounel-server.toml"
@@ -462,13 +485,49 @@ validate_staging() {
     fi
 }
 
+# Decide where the installable binaries live inside an extracted
+# tarball, and set BINARY_ROOT. Offline bundles carry
+# per-architecture subdirectories (linux-amd64/, linux-arm64/) plus a
+# SHA256SUMS file; plain release tarballs carry flat binaries at the
+# staging root. Bundle binaries are verified against SHA256SUMS before
+# anything is installed, and a bundle without binaries for this
+# architecture fails loudly instead of installing another
+# architecture's binaries.
+setup_binary_root() {
+    local root="$1" arch="$2" arch_dir provided entry
+    if [ -d "$root/linux-amd64" ] || [ -d "$root/linux-arm64" ]; then
+        arch_dir="$root/linux-$arch"
+        if [ ! -d "$arch_dir" ]; then
+            provided=""
+            for entry in "$root"/linux-*/; do
+                [ -d "$entry" ] || continue
+                provided="$provided $(basename "$entry")"
+            done
+            die "offline bundle has no binaries for this architecture ($arch); bundle provides:${provided:- none}"
+        fi
+        [ -f "$root/SHA256SUMS" ] || die "offline bundle is missing SHA256SUMS; refusing to install unverified binaries"
+        (cd "$root" && sha256sum -c SHA256SUMS) || die "SHA256SUMS verification failed for the offline bundle; aborting"
+        note "Offline bundle: SHA256SUMS verified, using binaries for $arch"
+        BINARY_ROOT="$arch_dir"
+    else
+        BINARY_ROOT="$root"
+    fi
+}
+
 # --- local tarball acquisition ----------------------------------------------
 
 acquire_from_local_tarball() {
-    local tarball="$1" staging="$2" sidecar expected
+    local arch="$1" tarball="$2" staging="$3" sidecar expected
     if [ "$DRY_RUN" -eq 1 ]; then
         printf '[dry-run] verify %s against its SHA-256, then extract it to a staging directory\n' "$tarball"
         STAGING_ROOT="<staging>"
+        # A bundle listing is readable offline; reflect the per-arch
+        # binary path in dry-run output when the tarball is a bundle.
+        if tar -tzf "$tarball" 2>/dev/null | grep -q "linux-${arch}/nexounel-server"; then
+            BINARY_ROOT="<staging>/linux-$arch"
+        else
+            BINARY_ROOT="<staging>"
+        fi
         return 0
     fi
     [ -f "$tarball" ] || die "tarball not found: $tarball"
@@ -483,6 +542,7 @@ acquire_from_local_tarball() {
     fi
     extract_tarball "$tarball" "$staging"
     STAGING_ROOT="$(staging_root "$staging" "$tarball")"
+    setup_binary_root "$STAGING_ROOT" "$arch"
     validate_staging "$STAGING_ROOT"
 }
 
@@ -515,6 +575,7 @@ acquire_from_download() {
     fi
     extract_tarball "$tarball_file" "$staging"
     STAGING_ROOT="$(staging_root "$staging" "$tarball_file")"
+    BINARY_ROOT="$STAGING_ROOT"
     validate_staging "$STAGING_ROOT"
 }
 
@@ -620,6 +681,7 @@ acquire_from_source() {
         die "source tarball has no install/units; cannot build units from source for $RELEASE_VERSION"
     fi
     STAGING_ROOT="$build_root"
+    BINARY_ROOT="$build_root"
     validate_staging "$STAGING_ROOT"
 }
 
@@ -797,9 +859,15 @@ do_install() {
     if [ "$DRY_RUN" -eq 0 ] && [ -z "$DESTDIR" ] && [ "$(id -u)" -ne 0 ]; then
         die "run as root to install to the system paths (or use --destdir for a test install)"
     fi
-    for tool in curl tar sha256sum install mktemp; do
+    for tool in tar sha256sum install mktemp; do
         command -v "$tool" >/dev/null 2>&1 || die "required tool not found: $tool"
     done
+    # curl is only needed for downloads. A local --tarball install
+    # (including an offline bundle) and --dry-run never fetch
+    # anything, so they must work on hosts without curl.
+    if [ -z "$TARBALL" ] && [ "$DRY_RUN" -eq 0 ]; then
+        command -v curl >/dev/null 2>&1 || die "required tool not found: curl (not required with --tarball)"
+    fi
     if [ -z "$DESTDIR" ] && [ "$DRY_RUN" -eq 0 ]; then
         command -v systemctl >/dev/null 2>&1 || die "systemctl not found: this installer requires systemd"
     fi
@@ -817,7 +885,7 @@ do_install() {
 
     STAGING_ROOT=""
     if [ -n "$TARBALL" ]; then
-        acquire_from_local_tarball "$TARBALL" "$staging"
+        acquire_from_local_tarball "$arch" "$TARBALL" "$staging"
     elif [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
         acquire_from_source "$arch" "$staging" "$workdir"
     else
@@ -830,15 +898,15 @@ do_install() {
     ensure_dir "$logrotate_dir" "755"
 
     if [ "$MODE_MOTHER" -eq 1 ]; then
-        install_file "$STAGING_ROOT/nexounel-server" "$install_dir/nexounel-server" "755"
-        install_file "$STAGING_ROOT/nexounel-panel" "$install_dir/nexounel-panel" "755"
+        install_file "$BINARY_ROOT/nexounel-server" "$install_dir/nexounel-server" "755"
+        install_file "$BINARY_ROOT/nexounel-panel" "$install_dir/nexounel-panel" "755"
         install_config_if_absent "$STAGING_ROOT/configs/nexounel-server.toml" "$install_dir/nexounel-server.toml" "600"
         install_config_if_absent "$STAGING_ROOT/configs/nodes.toml.example" "$install_dir/nodes.toml" "600"
         install_file "$STAGING_ROOT/units/nexounel.service" "$unit_dir/nexounel.service" "644"
         install_file "$STAGING_ROOT/units/nexounel-panel.service" "$unit_dir/nexounel-panel.service" "644"
     fi
     if [ "$MODE_NODE" -eq 1 ]; then
-        install_file "$STAGING_ROOT/nexounel-node" "$install_dir/nexounel-node" "755"
+        install_file "$BINARY_ROOT/nexounel-node" "$install_dir/nexounel-node" "755"
         install_config_if_absent "$STAGING_ROOT/configs/nexounel-node.toml" "$install_dir/nexounel-node.toml" "600"
         install_file "$STAGING_ROOT/units/nexounel-node.service" "$unit_dir/nexounel-node.service" "644"
     fi

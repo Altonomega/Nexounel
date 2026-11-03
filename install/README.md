@@ -21,6 +21,10 @@ configs, keys, the node registry, and panel credentials.
 
 # Preview only; prints every action, changes nothing, works offline:
 ./install/install.sh --dry-run --mother
+
+# Offline bundle (zero network at install time; see below):
+./install/install.sh --mother --node \
+  --tarball /tmp/nexounel-v3.5.0-offline.tar.gz --non-interactive
 ```
 
 Run as root for a real install. `--help` works fully offline.
@@ -42,6 +46,29 @@ path layout (`.../MNSH-Nexo/Nexounel/releases/download/<version>/<artifact>`).
 See the comment block at the top of `install.sh` for the format; add
 Iranian mirrors there by prepending their URLs, do not edit the
 defaults in place without verifying the host serves the artifacts.
+
+### Offline bundle
+
+For servers without reliable network access or working mirrors, a
+single self-contained bundle installs with zero network access and
+zero external downloads. Build it from the repository:
+
+```sh
+install/package-offline-bundle.sh [--version X] [--out DIR]
+```
+
+This writes `nexounel-<version>-offline.tar.gz` plus a `.sha256`
+sidecar, containing `install.sh`, the three binaries for both
+`linux/amd64` and `linux/arm64`, a `SHA256SUMS` file covering every
+binary, the units, the logrotate config, and the sample configs.
+Install from it with `--tarball` (keep the `.tar.gz` and its `.sha256`
+sidecar next to the extracted directory; the installer verifies the
+whole bundle, then the selected binaries against `SHA256SUMS`, and
+makes no network call of any kind on this path — `curl` is not
+required). The host architecture is detected automatically; any
+other architecture fails loudly. See `docs/OFFLINE-INSTALL.md` for
+both install paths, and the quick-start inside the bundle
+(`README.md`, English + Persian).
 
 ### Source-build fallback
 
@@ -102,12 +129,24 @@ deterministic `nexounel-<version>-linux-<arch>.tar.gz` plus a
 contents, runs each binary's `-version` flag, and checks the sidecar.
 It works offline given a Go toolchain and a populated module cache.
 
+`install/package-offline-bundle.sh [--version X] [--out DIR]` builds
+the offline bundle instead: the three binaries for both `amd64` and
+`arm64`, plus `install.sh`, `SHA256SUMS`, units, logrotate config, and
+sample configs, in one deterministic
+`nexounel-<version>-offline.tar.gz` plus a `.sha256` sidecar. It
+verifies the bundle the same way (amd64 binaries run `-version`;
+arm64 binaries are checked with `go version -m` and their embedded
+version stamp).
+
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `install/install.sh` | The installer |
 | `install/package-release.sh` | Release tarball builder |
+| `install/package-offline-bundle.sh` | Offline bundle builder (amd64 + arm64, zero-network install) |
+| `install/README-offline-bundle.md` | Quick-start shipped inside the offline bundle (English + Persian) |
+| `install/test-install.sh` | Installer tests (bundle build, offline proof, arch/checksum/round-trip cases) |
 | `install/units/` | `nexounel.service`, `nexounel-node.service`, `nexounel-panel.service` |
 | `install/logrotate/nexounel` | Logrotate config (daily, 7 days) |
 
