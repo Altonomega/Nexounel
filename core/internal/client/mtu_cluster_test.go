@@ -10,6 +10,7 @@ package client
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -426,5 +427,187 @@ func TestEvaluateMTUCandidate_LegacyRetry(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Errorf("expected 3 attempts, got %d", calls)
+	}
+}
+
+// ==============================================================================
+// Scale audit (F3): operating-point floor deduplication equivalence proof.
+//
+// naiveSelectMTUOperatingPoint / naiveSelectMTUOperatingPointPreferHigh are
+// verbatim copies of the pre-dedup O(V^2) loops. The equivalence tests below
+// passed against the ORIGINAL implementations and must keep passing after the
+// distinct-floor optimization: dedup may only collapse redundant outer
+// iterations, never change a selection.
+// ==============================================================================
+
+func naiveSelectMTUOperatingPoint(conns []Connection) (uploadMTU, downloadMTU, poolSize int) {
+	type cand struct{ upload, download int }
+	cands := make([]cand, 0, len(conns))
+	for _, c := range conns {
+		if c.IsValid && c.DownloadMTUBytes > 0 && c.UploadMTUBytes > 0 {
+			cands = append(cands, cand{c.UploadMTUBytes, c.DownloadMTUBytes})
+		}
+	}
+	if len(cands) == 0 {
+		return 0, 0, 0
+	}
+
+	bestScore := -1
+	for _, floor := range cands {
+		pool := 0
+		minUpload, minDownload := 0, 0
+		for _, c := range cands {
+			if c.upload < floor.upload || c.download < floor.download {
+				continue
+			}
+			pool++
+			if minUpload == 0 || c.upload < minUpload {
+				minUpload = c.upload
+			}
+			if minDownload == 0 || c.download < minDownload {
+				minDownload = c.download
+			}
+		}
+		if pool == 0 {
+			continue
+		}
+		score := (minUpload + minDownload) * pool
+		if score > bestScore || (score == bestScore && minDownload > downloadMTU) {
+			bestScore = score
+			uploadMTU = minUpload
+			downloadMTU = minDownload
+			poolSize = pool
+		}
+	}
+	return uploadMTU, downloadMTU, poolSize
+}
+
+func naiveSelectMTUOperatingPointPreferHigh(conns []Connection, minPool int) (uploadMTU, downloadMTU, poolSize int) {
+	if minPool < 1 {
+		minPool = 1
+	}
+	type cand struct{ upload, download int }
+	cands := make([]cand, 0, len(conns))
+	for _, c := range conns {
+		if c.IsValid && c.DownloadMTUBytes > 0 && c.UploadMTUBytes > 0 {
+			cands = append(cands, cand{c.UploadMTUBytes, c.DownloadMTUBytes})
+		}
+	}
+	if len(cands) == 0 {
+		return 0, 0, 0
+	}
+
+	for _, floor := range cands {
+		pool := 0
+		minUpload, minDownload := 0, 0
+		for _, c := range cands {
+			if c.upload < floor.upload || c.download < floor.download {
+				continue
+			}
+			pool++
+			if minUpload == 0 || c.upload < minUpload {
+				minUpload = c.upload
+			}
+			if minDownload == 0 || c.download < minDownload {
+				minDownload = c.download
+			}
+		}
+		if pool < minPool {
+			continue
+		}
+		better := minDownload > downloadMTU ||
+			(minDownload == downloadMTU && minUpload > uploadMTU) ||
+			(minDownload == downloadMTU && minUpload == uploadMTU && pool > poolSize)
+		if better {
+			uploadMTU = minUpload
+			downloadMTU = minDownload
+			poolSize = pool
+		}
+	}
+
+	if downloadMTU == 0 {
+		return naiveSelectMTUOperatingPoint(conns)
+	}
+	return uploadMTU, downloadMTU, poolSize
+}
+
+func dedupEquivalenceSets() [][]Connection {
+	mk := func(pairs ...[2]int) []Connection {
+		conns := make([]Connection, 0, len(pairs))
+		for _, p := range pairs {
+			conns = append(conns, Connection{IsValid: true, UploadMTUBytes: p[0], DownloadMTUBytes: p[1]})
+		}
+		return conns
+	}
+	sets := [][]Connection{
+		nil,
+		{},
+		{{IsValid: false, UploadMTUBytes: 100, DownloadMTUBytes: 1000}},
+		{{IsValid: true, UploadMTUBytes: 0, DownloadMTUBytes: 1000}},
+		mk([2]int{110, 3475}),
+		mk([2]int{110, 3475}, [2]int{110, 3475}, [2]int{110, 3475}),
+		mk([2]int{110, 1015}, [2]int{110, 3475}, [2]int{110, 3475}, [2]int{110, 1015}),
+		// Tie on score between distinct floors: (100+1000)*10 == (100+2000)*5
+		// is false, so use exact tie: (110+1000)*4 == (110+1000)*4 via duplicates.
+		mk([2]int{110, 1000}, [2]int{110, 1000}, [2]int{110, 1000}, [2]int{110, 1000}, [2]int{60, 3000}, [2]int{60, 3000}),
+		// Upload laggard: one resolver with a tiny upload but huge download.
+		mk([2]int{110, 3475}, [2]int{110, 3475}, [2]int{110, 3475}, [2]int{20, 4000}, [2]int{20, 4000}),
+		// Crowd vs outlier.
+		mk([2]int{100, 1000}, [2]int{100, 1000}, [2]int{100, 1000}, [2]int{100, 1000}, [2]int{100, 1000}, [2]int{200, 4000}),
+		// Mixed valid/invalid/zero rows interleaved with duplicates.
+		{
+			{IsValid: true, UploadMTUBytes: 110, DownloadMTUBytes: 3475},
+			{IsValid: false, UploadMTUBytes: 200, DownloadMTUBytes: 4000},
+			{IsValid: true, UploadMTUBytes: 110, DownloadMTUBytes: 3475},
+			{IsValid: true, UploadMTUBytes: 0, DownloadMTUBytes: 3475},
+			{IsValid: true, UploadMTUBytes: 90, DownloadMTUBytes: 1015},
+			{IsValid: true, UploadMTUBytes: 90, DownloadMTUBytes: 1015},
+			{IsValid: true, UploadMTUBytes: 140, DownloadMTUBytes: 2130},
+		},
+	}
+	// Seeded random fleets drawn from small MTU tier sets (heavy duplication),
+	// with occasional invalid/zero rows.
+	rng := rand.New(rand.NewSource(20261103))
+	uploads := []int{20, 60, 90, 110, 140, 200}
+	downloads := []int{950, 1000, 1015, 1067, 2130, 2478, 3475, 4000}
+	for s := 0; s < 300; s++ {
+		n := 1 + rng.Intn(60)
+		conns := make([]Connection, 0, n)
+		for i := 0; i < n; i++ {
+			c := Connection{IsValid: true, UploadMTUBytes: uploads[rng.Intn(len(uploads))], DownloadMTUBytes: downloads[rng.Intn(len(downloads))]}
+			if rng.Intn(10) == 0 {
+				c.IsValid = false
+			}
+			if rng.Intn(12) == 0 {
+				c.UploadMTUBytes = 0
+			}
+			conns = append(conns, c)
+		}
+		sets = append(sets, conns)
+	}
+	return sets
+}
+
+func TestSelectMTUOperatingPointDedupMatchesNaive(t *testing.T) {
+	for i, conns := range dedupEquivalenceSets() {
+		wantU, wantD, wantPool := naiveSelectMTUOperatingPoint(conns)
+		gotU, gotD, gotPool := selectMTUOperatingPoint(conns)
+		if gotU != wantU || gotD != wantD || gotPool != wantPool {
+			t.Fatalf("set %d: dedup=(%d,%d,%d) naive=(%d,%d,%d) conns=%+v",
+				i, gotU, gotD, gotPool, wantU, wantD, wantPool, conns)
+		}
+	}
+}
+
+func TestSelectMTUOperatingPointPreferHighDedupMatchesNaive(t *testing.T) {
+	for _, minPool := range []int{0, 1, 2, 5, 100} {
+		for i, conns := range dedupEquivalenceSets() {
+			wantU, wantD, wantPool := naiveSelectMTUOperatingPointPreferHigh(conns, minPool)
+			gotU, gotD, gotPool := selectMTUOperatingPointPreferHigh(conns, minPool)
+			if gotU != wantU || gotD != wantD || gotPool != wantPool {
+				t.Fatalf("minPool=%d set %d: dedup=(%d,%d,%d) naive=(%d,%d,%d) conns=%+v",
+					minPool, i, gotU, gotD, gotPool, wantU, wantD, wantPool, conns)
+			}
+		}
 	}
 }

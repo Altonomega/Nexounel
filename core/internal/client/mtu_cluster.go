@@ -81,6 +81,35 @@ func clusterConnectionsByMTU(conns []Connection, gapRatio float64) []mtuGroup {
 	return groups
 }
 
+// mtuFloor is one distinct (upload, download) capacity pair. The
+// operating-point loops below depend only on floor VALUES for the outer
+// iteration: for a given floor, the pool, the pool minimums and the score
+// are functions of the candidate SET, so duplicate floors recompute
+// identical tuples. distinctMTUFloors collapses that redundant work;
+// the inner pool scan still counts every connection (duplicates included).
+type mtuFloor struct{ upload, download int }
+
+// distinctMTUFloors returns the distinct (upload, download) pairs among the
+// valid connections, in first-occurrence order. First-occurrence order is
+// load-bearing: the selection loops keep the FIRST floor that achieves the
+// best tuple under their strict tie-breaks, so the deduped iteration must
+// visit distinct values in the same relative order as the full list.
+func distinctMTUFloors(conns []Connection) []mtuFloor {
+	seen := make(map[mtuFloor]struct{}, len(conns))
+	floors := make([]mtuFloor, 0, len(conns))
+	for _, c := range conns {
+		if c.IsValid && c.DownloadMTUBytes > 0 && c.UploadMTUBytes > 0 {
+			f := mtuFloor{upload: c.UploadMTUBytes, download: c.DownloadMTUBytes}
+			if _, ok := seen[f]; ok {
+				continue
+			}
+			seen[f] = struct{}{}
+			floors = append(floors, f)
+		}
+	}
+	return floors
+}
+
 // selectMTUOperatingPoint chooses the throughput-optimal session MTU over the
 // valid connections (Layer 3, "best-group" strategy). It jointly optimizes both
 // directions: for each resolver's own (upload, download) pair taken as a
@@ -104,7 +133,7 @@ func selectMTUOperatingPoint(conns []Connection) (uploadMTU, downloadMTU, poolSi
 	}
 
 	bestScore := -1
-	for _, floor := range cands {
+	for _, floor := range distinctMTUFloors(conns) {
 		pool := 0
 		minUpload, minDownload := 0, 0
 		for _, c := range cands {
@@ -162,7 +191,7 @@ func selectMTUOperatingPointPreferHigh(conns []Connection, minPool int) (uploadM
 		return 0, 0, 0
 	}
 
-	for _, floor := range cands {
+	for _, floor := range distinctMTUFloors(conns) {
 		pool := 0
 		minUpload, minDownload := 0, 0
 		for _, c := range cands {
