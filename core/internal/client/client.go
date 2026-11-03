@@ -29,6 +29,7 @@ import (
 	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/resolvertransport"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
 	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
@@ -401,16 +402,37 @@ func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Clie
 }
 
 // BootstrapFromLogs initializes a new Client using working resolvers recovered from
-// previous session logs, skipping the full MTU scan when LOG_BASED_MTU_VERIFY is false.
-// When entries is empty it falls back to the normal Bootstrap path.
+// previous session logs. Cached MTUs are trusted outright when
+// LOG_BASED_MTU_VERIFY is false and cheaply verified (one probe per direction
+// at the cached sizes) when it is true; either way the full MTU scan runs
+// only for resolvers without a usable cache entry. When entries is empty it
+// falls back to the normal Bootstrap path.
 func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, overrides config.ClientConfigOverrides) (*Client, error) {
 	if len(entries) == 0 {
 		return Bootstrap(configPath, overrides)
 	}
 
-	// Build a deduplicated resolver list from the log entries.
-	seen := make(map[string]struct{}, len(entries))
-	resolvers := make([]config.ResolverAddress, 0, len(entries))
+	// Union, not replace: the cache holds resolvers that worked in a past
+	// session, but the configured list may be newer or larger. Replacing
+	// the list with the cache would silently drop configured resolvers
+	// that have no cache entry yet — the hybrid scan in
+	// applyPreknownMTUsFromLog exists precisely to cover those, so they
+	// must survive into the connection map. Cached entries come first so
+	// the scanner's ranking is preserved; a caller-pinned resolver list
+	// (overrides.Resolvers) takes precedence over the file list.
+	pinned := overrides.Resolvers
+	baseOverrides := overrides
+	baseOverrides.Resolvers = nil
+	baseCfg, err := config.LoadClientConfigWithOverrides(configPath, baseOverrides)
+	if err != nil {
+		return nil, err
+	}
+	configured := pinned
+	if len(configured) == 0 {
+		configured = baseCfg.Resolvers
+	}
+	seen := make(map[string]struct{}, len(entries)+len(configured))
+	resolvers := make([]config.ResolverAddress, 0, len(entries)+len(configured))
 	for _, e := range entries {
 		epKey := e.IP + "|" + strconv.Itoa(e.Port)
 		if _, exists := seen[epKey]; exists {
@@ -418,6 +440,14 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 		}
 		seen[epKey] = struct{}{}
 		resolvers = append(resolvers, config.ResolverAddress{IP: e.IP, Port: e.Port})
+	}
+	for _, r := range configured {
+		epKey := r.IP + "|" + strconv.Itoa(r.Port)
+		if _, exists := seen[epKey]; exists {
+			continue
+		}
+		seen[epKey] = struct{}{}
+		resolvers = append(resolvers, r)
 	}
 	overrides.Resolvers = resolvers
 
@@ -471,6 +501,91 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 			// finalizeMTUSelection during startup, so the operating point always
 			// reflects the resolver set actually present this run.
 		}
+	}
+
+	if cacheLogPath := cfg.ResolvedResolverCacheLogPath(); cacheLogPath != "" {
+		c.openResolverCacheLog(cacheLogPath)
+	}
+
+	return c, nil
+}
+
+// BootstrapWithMeasuredMTUs initializes a new Client whose connections carry
+// just-measured MTUs (for example from a probe pass that ran seconds earlier
+// in the same process) instead of re-probing them. Only entries that are
+// valid with positive MTUs pre-fill a connection; every other connection
+// (unknown resolver, failed probe) is fully scanned by the normal hybrid
+// path in Run, so a partial or stale measurement set can never strand a
+// resolver. Measured loss is the probe pass's collapsed loss (the worse of
+// the two directions); it is advisory only and never changes selection.
+//
+// This is the multi-session class-client path (scale-audit fix F1c): the
+// probe pass already measured every class member, so re-running the binary
+// search per class would pay the full probe cost once per class for the
+// same numbers. Callers cap the measurements at the class operating point
+// before passing them in, reproducing what a clamped re-probe would find.
+func BootstrapWithMeasuredMTUs(configPath string, overrides config.ClientConfigOverrides, measured []multisession.ProbeResult) (*Client, error) {
+	cfg, err := config.LoadClientConfigWithOverrides(configPath, overrides)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ApplyStartupModeMTU("resolvers")
+
+	log := logger.New("CottenDns Client", cfg.LogLevel)
+	if cfg.NodeID != "" {
+		log.Infof("Node ID: <cyan>%s</cyan>", cfg.NodeID)
+	}
+
+	key, err := resolveClientEncryptionKey(cfg)
+	if err != nil {
+		return nil, err
+	}
+	// See Bootstrap: the effective key is the key in use everywhere.
+	cfg.EncryptionKey = key
+	codec, err := security.NewCodec(cfg.DataEncryptionMethod, key)
+	if err != nil {
+		return nil, fmt.Errorf("client codec setup failed: %w", err)
+	}
+
+	c := New(cfg, log, codec)
+	c.connectionsHavePreknownMTU = true
+	// Trust: the measurements are seconds old and came from this process.
+	// Verification would re-probe and defeat the purpose.
+	c.logBasedMTUVerify = false
+
+	if err := c.BuildConnectionMap(); err != nil {
+		if c.log != nil {
+			c.log.Errorf("<red>%v</red>", err)
+		}
+		return nil, err
+	}
+
+	// Pre-fill MTU values from the probe pass into the connection map.
+	// The lookup is by resolver address (IP|port): measurements are a
+	// per-resolver property, and every domain row for the resolver shares
+	// them, exactly as ProbeResults deduplicates them.
+	lookup := make(map[string]multisession.ProbeResult, len(measured))
+	for _, m := range measured {
+		if !m.Valid || m.UploadMTU <= 0 || m.DownloadMTU <= 0 {
+			continue
+		}
+		key := m.Resolver + "|" + strconv.Itoa(m.Port)
+		if existing, ok := lookup[key]; !ok || m.DownloadMTU > existing.DownloadMTU {
+			lookup[key] = m
+		}
+	}
+	for i := range c.connections {
+		conn := &c.connections[i]
+		m, ok := lookup[conn.Resolver+"|"+strconv.Itoa(conn.ResolverPort)]
+		if !ok {
+			continue
+		}
+		conn.IsValid = true
+		conn.UploadMTUBytes = m.UploadMTU
+		conn.DownloadMTUBytes = m.DownloadMTU
+		conn.UploadMTUChars = c.encodedCharsForPayload(m.UploadMTU)
+		conn.UploadMTULoss = m.Loss
+		conn.DownloadMTULoss = m.Loss
 	}
 
 	if cacheLogPath := cfg.ResolvedResolverCacheLogPath(); cacheLogPath != "" {
@@ -648,7 +763,11 @@ func (c *Client) Run(ctx context.Context) error {
 				if c.cfg.FastConnect {
 					c.connectionsHavePreknownMTU = false
 					mtuErr = c.RunInitialMTUTests(ctx)
-				} else if c.connectionsHavePreknownMTU && !c.logBasedMTUVerify {
+				} else if c.connectionsHavePreknownMTU {
+					// Cache fast start: trust (LOG_BASED_MTU_VERIFY=false) or
+					// cheaply verify (LOG_BASED_MTU_VERIFY=true, the default)
+					// cached MTUs; applyPreknownMTUsFromLog falls back to the
+					// full scan on error below.
 					mtuErr = c.applyPreknownMTUsFromLog(ctx)
 					if mtuErr != nil {
 						if c.log != nil {

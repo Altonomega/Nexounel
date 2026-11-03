@@ -1471,6 +1471,11 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 		return ErrNoValidConnections
 	}
 
+	// Snapshot the cache-derived set BEFORE the hybrid scan: the hybrid scan
+	// marks fresh connections valid too, and verification must only cover
+	// the cached ones.
+	preknown := preknownMTUIndices(c.connections)
+
 	// Hybrid start: trust cached MTUs for resolvers that have a log entry, but
 	// still probe any resolver in the CURRENT list that has none — so a changed
 	// or extended resolver list is always fully covered. Caching is only a
@@ -1480,6 +1485,26 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 			"<green>⚡ Cache start: scanned <cyan>%d</cyan> resolver(s) not present in the cache (new/changed list)</green>",
 			scanned,
 		)
+	}
+
+	// Scale-audit F1a: LOG_BASED_MTU_VERIFY (the default) re-checks cached
+	// MTUs with one probe per direction at the cached sizes instead of a
+	// full binary search. Failures are fully re-probed (dead ones are
+	// filtered out by the liveness pre-filter first); a failed verification
+	// never rejects a resolver outright.
+	if c.logBasedMTUVerify && len(preknown) > 0 {
+		if failed := c.verifyPreknownMTUs(ctx, preknown); len(failed) > 0 {
+			if c.log != nil {
+				c.log.Infof(
+					"<yellow>⚠️ Cache verify: <cyan>%d</cyan> resolver(s) failed verification, re-probing</yellow>",
+					len(failed),
+				)
+			}
+			failed = c.prefilterLiveConnections(ctx, failed)
+			if len(failed) > 0 {
+				c.scanMTUIndices(ctx, failed)
+			}
+		}
 	}
 
 	validConns, minUpload, minDownload, minUploadChars := summarizeValidMTUConnections(c.connections)
@@ -1527,6 +1552,15 @@ func (c *Client) scanConnectionsWithoutPreknownMTU(ctx context.Context) int {
 		return 0
 	}
 
+	return c.scanMTUIndices(ctx, indices)
+}
+
+// scanMTUIndices runs the full binary-search probe over exactly the given
+// connection indices with the configured worker pool, and returns the number
+// of indices probed. Callers must have reset the connections' scan state
+// first (prepareConnectionMTUScanState); no liveness filtering happens here
+// — callers filter before calling when they want it.
+func (c *Client) scanMTUIndices(ctx context.Context, indices []int) int {
 	uploadCaps := c.precomputeUploadCaps()
 	total := len(c.connections)
 	workerCount := min(max(1, c.cfg.MTUTestParallelism), len(indices))
