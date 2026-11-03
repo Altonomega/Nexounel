@@ -250,12 +250,12 @@ dispatchLoop:
 			conns:      conns,
 		}
 
-		select {
-		case c.txChannel <- task:
-		case <-ctx.Done():
-			if !wasPacked && selected != nil {
-				selected.ReleaseTXPacket(item)
-			}
+		// emitOutboundTask is the packing choke point: it is flag-gated
+		// and merge-gated in packer.go. Today the merge gate admits no
+		// packet type (concatenating sequence-numbered segments would
+		// corrupt ARQ accounting), so this sends the task unchanged
+		// whether PACKING_ENABLED is on or off.
+		if !c.emitOutboundTask(ctx, task) {
 			return
 		}
 	}
