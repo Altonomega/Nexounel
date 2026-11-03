@@ -142,6 +142,17 @@ cp -a "$REPO_ROOT/install/logrotate/nexounel" "$STAGING/logrotate/"
 # extraction. Sorted for determinism.
 (cd "$STAGING" && sha256sum linux-amd64/nexounel-* linux-arm64/nexounel-* | LC_ALL=C sort >SHA256SUMS)
 
+# Normalize modes so the bundle is reproducible regardless of the
+# checkout's umask or the staging parent's setgid bit (directory
+# modes otherwise leak into the tar headers): directories 0755,
+# regular files 0644, binaries and the installer 0755. The installer
+# applies its own modes at install time, so this only affects the
+# tarball itself. SHA256SUMS covers file contents only and is
+# unaffected by modes.
+find "$STAGING" -type d -exec chmod 755 {} +
+find "$STAGING" -type f -exec chmod 644 {} +
+chmod 755 "$STAGING"/linux-*/nexounel-* "$STAGING/install.sh"
+
 BUNDLE_PATH="$OUT_DIR/$BUNDLE_NAME"
 printf 'Creating %s ...\n' "$BUNDLE_PATH"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf - -C "$WORKDIR" "$TOP_DIR" | gzip -n >"$BUNDLE_PATH"
