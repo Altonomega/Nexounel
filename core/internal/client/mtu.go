@@ -104,6 +104,28 @@ func (c *Client) RunInitialMTUTests(ctx context.Context) error {
 		return ErrNoValidConnections
 	}
 
+	// Cache fast start (F1a): when the client was built from a resolver
+	// cache log, verify the cached capacities with one probe per
+	// direction instead of re-running the full binary search over the
+	// whole fleet. This is the same decision the single-session Run
+	// loop makes; without it the multi-session probe pass pays the full
+	// scan on every restart even with a fresh cache, which stalls
+	// startup on a large, partly-stale fleet (logs-mode parallelism 32
+	// x retries 5 x 2s timeout x 6 query types: up to ~120s per
+	// degraded resolver, all of it deadline-bound so the process looks
+	// idle while it grinds). Verification failure falls through to the
+	// full scan below, exactly as Run's fallback does, after clearing
+	// the flag and resetting scan state so no cached value is trusted.
+	if c.connectionsHavePreknownMTU && !c.cfg.FastConnect {
+		if err := c.applyPreknownMTUsFromLog(ctx); err == nil {
+			return nil
+		}
+		c.connectionsHavePreknownMTU = false
+		for idx := range c.connections {
+			c.prepareConnectionMTUScanState(&c.connections[idx])
+		}
+	}
+
 	chain := resolverTransportChain(c.cfg.ResolverTransport)
 	var firstErr error
 	for i, transport := range chain {

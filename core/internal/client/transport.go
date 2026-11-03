@@ -105,6 +105,9 @@ func (c *Client) usesStreamTransport() bool {
 // newQueryTransport opens a synchronous query transport to resolverLabel using
 // the client's active transport.
 func (c *Client) newQueryTransport(resolverLabel string) (queryExchanger, error) {
+	if c.queryTransportFactory != nil {
+		return c.queryTransportFactory(resolverLabel)
+	}
 	switch c.activeTransport() {
 	case transportDoH, transportDoH3, transportDoQ:
 		return c.newEncryptedQueryTransport(resolverLabel)

@@ -136,6 +136,13 @@ type Client struct {
 	connectionsHavePreknownMTU bool
 	logBasedMTUVerify          bool
 
+	// queryTransportFactory, when set, replaces newQueryTransport. It is
+	// a test-only seam (nil in production) so probe-pass behavior can be
+	// exercised against a fake resolver without a network: the sandbox
+	// blocks UDP loopback, and the probe pass must never touch a real
+	// resolver from a test.
+	queryTransportFactory func(resolverLabel string) (queryExchanger, error)
+
 	// Session States
 	sessionID           uint16
 	sessionCookie       uint8
