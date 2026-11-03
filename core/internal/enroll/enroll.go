@@ -382,31 +382,68 @@ func (s *PendingStore) RecordFailure(token string) {
 // unaffected (revocation of an enrolled node is a registry removal,
 // not a pending-join operation).
 func (s *PendingStore) Revoke(nodeID string) bool {
+	_, ok := s.RevokeFingerprint(nodeID)
+	return ok
+}
+
+// RevokeFingerprint deletes the pending join for nodeID and returns
+// its full fingerprint, so the caller can clean up fingerprint-keyed
+// side effects (the panel's pushed bootstrap key). When several
+// pending joins share a nodeID, one of them is removed — the same
+// first-match semantics Revoke has always had; the common case is
+// one outstanding token per node.
+func (s *PendingStore) RevokeFingerprint(nodeID string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for fp, entry := range s.entries {
-		if entry.nodeID == nodeID {
+		if entry.nodeID == strings.TrimSpace(nodeID) {
 			delete(s.entries, fp)
-			return true
+			return fp, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// RemoveByFingerprint deletes the pending join named by its full
+// fingerprint and reports whether one was present. It exists for
+// exact rollback: a caller that just issued a token knows its
+// fingerprint and must remove exactly that entry, never a
+// same-node sibling's.
+func (s *PendingStore) RemoveByFingerprint(fingerprint string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.entries[fingerprint]; !ok {
+		return false
+	}
+	delete(s.entries, fingerprint)
+	return true
 }
 
 // Sweep drops expired and used entries. Callers run it on a ticker;
 // entries are also lazily refused by lookup, so a missed sweep is
 // never a security hole, only a memory one.
 func (s *PendingStore) Sweep() int {
+	return len(s.SweepFingerprints())
+}
+
+// SweepFingerprints drops expired, used, and burned entries and
+// returns the full fingerprints of the dropped joins, so the caller
+// can clean up side effects keyed by fingerprint (the panel's
+// pushed bootstrap keys). The raw token is never exposed: the
+// fingerprint is a hash, safe to log and to hand to the control
+// socket for key removal.
+func (s *PendingStore) SweepFingerprints() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	dropped := 0
+	var dropped []string
 	for fp, entry := range s.entries {
 		if entry.used || entry.burned || !now.Before(entry.expiresAt) {
 			delete(s.entries, fp)
-			dropped++
+			dropped = append(dropped, fp)
 		}
 	}
+	sort.Strings(dropped)
 	return dropped
 }
 

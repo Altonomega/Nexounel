@@ -184,6 +184,78 @@ func TestPendingStoreExpiryAndBurn(t *testing.T) {
 	}
 }
 
+func TestPendingStoreSweepFingerprints(t *testing.T) {
+	now := time.Now()
+	clock := func() time.Time { return now }
+	s := NewPendingStore(clock)
+	token, _, err := s.Issue("node-2", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token2, _, err := s.Issue("node-3", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Consume one: sweep must report exactly its fingerprint, and
+	// the live token must survive.
+	if _, err := s.Consume(token); err != nil {
+		t.Fatal(err)
+	}
+	dropped := s.SweepFingerprints()
+	if len(dropped) != 1 || dropped[0] != TokenFingerprint(token) {
+		t.Fatalf("dropped = %v, want [%s]", dropped, TokenFingerprint(token))
+	}
+	if _, err := s.Verify(token2); err != nil {
+		t.Fatalf("live token must survive the sweep: %v", err)
+	}
+	// Expiry is reported too.
+	now = now.Add(2 * time.Hour)
+	dropped = s.SweepFingerprints()
+	if len(dropped) != 1 || dropped[0] != TokenFingerprint(token2) {
+		t.Fatalf("dropped = %v, want [%s]", dropped, TokenFingerprint(token2))
+	}
+}
+
+func TestPendingStoreRevokeFingerprintAndRemoveByFingerprint(t *testing.T) {
+	s := NewPendingStore(nil)
+	tokenA, _, err := s.Issue("node-2", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenB, _, err := s.Issue("node-2", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// RevokeFingerprint removes exactly one join and names it, so
+	// the caller can drop that join's pushed bootstrap key.
+	fp, ok := s.RevokeFingerprint("node-2")
+	if !ok || (fp != TokenFingerprint(tokenA) && fp != TokenFingerprint(tokenB)) {
+		t.Fatalf("RevokeFingerprint = (%q, %v)", fp, ok)
+	}
+	if _, ok := s.RevokeFingerprint("node-absent"); ok {
+		t.Fatal("revoke of an absent node must report false")
+	}
+	// RemoveByFingerprint removes exactly the named entry: the
+	// surviving sibling token must still verify.
+	other := tokenA
+	if fp == TokenFingerprint(tokenA) {
+		other = tokenB
+	}
+	survivorFP := TokenFingerprint(other)
+	if !s.RemoveByFingerprint(survivorFP) {
+		t.Fatal("RemoveByFingerprint must remove the surviving entry")
+	}
+	if s.RemoveByFingerprint(survivorFP) {
+		t.Fatal("second RemoveByFingerprint must report false")
+	}
+	if _, err := s.Verify(other); err == nil {
+		t.Fatal("removed token must no longer verify")
+	}
+	if len(s.List()) != 0 {
+		t.Fatalf("store not empty after removals: %+v", s.List())
+	}
+}
+
 func TestPendingStoreIssueValidation(t *testing.T) {
 	s := NewPendingStore(nil)
 	if _, _, err := s.Issue("bad id!", time.Hour); err == nil {

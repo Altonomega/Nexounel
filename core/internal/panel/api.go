@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,6 +71,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.requireAPIAuth(s.handleAPICompression).ServeHTTP(w, r)
 	case "/api/registry":
 		s.requireAPIAuth(s.handleAPIRegistry).ServeHTTP(w, r)
+	case "/api/mesh":
+		s.requireAPIAuth(s.handleAPIMesh).ServeHTTP(w, r)
 	default:
 		writeAPIError(w, http.StatusNotFound, "not found")
 	}
@@ -157,12 +160,18 @@ type apiStatus struct {
 	Compression   CompressionStatus  `json:"compression"`
 	ConfigFiles   ConfigFileState    `json:"config_files"`
 	RestartNeeded bool               `json:"restart_needed"`
+	Mesh          MeshView           `json:"mesh"`
+	PendingJoins  []PendingJoinView  `json:"pending_joins"`
 }
 
 func (s *Server) apiStatusFrom(ctxContent statusContent) apiStatus {
 	sessions := ctxContent.Sessions
 	if sessions == nil {
 		sessions = []SessionView{}
+	}
+	pending := ctxContent.PendingJoins
+	if pending == nil {
+		pending = []PendingJoinView{}
 	}
 	return apiStatus{
 		Server:        apiHealthFrom(ctxContent.Health),
@@ -175,6 +184,8 @@ func (s *Server) apiStatusFrom(ctxContent statusContent) apiStatus {
 		Compression:   ctxContent.Compression,
 		ConfigFiles:   ctxContent.ConfigFiles,
 		RestartNeeded: ctxContent.RestartNeeded,
+		Mesh:          ctxContent.Mesh,
+		PendingJoins:  pending,
 	}
 }
 
@@ -393,5 +404,114 @@ func (s *Server) handleAPIRegistryPost(w http.ResponseWriter, r *http.Request, r
 		})
 	default:
 		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("unknown registry action %q: want reload, add, remove or rotate", req.Action))
+	}
+}
+
+// --- Mesh endpoints ---
+
+// apiMeshRequest selects a mesh mutation. Issue fields mirror the
+// dashboard form; ttl_hours is optional (1-24, default 24).
+type apiMeshRequest struct {
+	Action         string `json:"action"`
+	NodeID         string `json:"node_id"`
+	ConnectAddress string `json:"connect_address"`
+	ListenPort     int    `json:"listen_port"`
+	ForwardRange   string `json:"forward_range"`
+	TTLHours       int    `json:"ttl_hours"`
+	Confirm        bool   `json:"confirm"`
+}
+
+func (s *Server) handleAPIMesh(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		mesh := s.liveMesh(r.Context())
+		pending := s.pendingJoinViews(r.Context())
+		if pending == nil {
+			pending = []PendingJoinView{}
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Mesh         MeshView          `json:"mesh"`
+			PendingJoins []PendingJoinView `json:"pending_joins"`
+		}{Mesh: mesh, PendingJoins: pending})
+	case http.MethodPost:
+		var req apiMeshRequest
+		dec := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+		s.handleAPIMeshPost(w, r, req)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleAPIMeshPost(w http.ResponseWriter, r *http.Request, req apiMeshRequest) {
+	switch strings.ToLower(strings.TrimSpace(req.Action)) {
+	case "issue":
+		params, err := normalizeJoinParams(joinParams{
+			NodeID:         req.NodeID,
+			ConnectAddress: req.ConnectAddress,
+			ListenPort:     req.ListenPort,
+			ForwardRange:   req.ForwardRange,
+			TTLHours:       req.TTLHours,
+		})
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		token, view, err := s.issueJoinToken(r.Context(), params)
+		if err != nil {
+			if errors.Is(err, errJoinValidation) {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			// Operational failure (store or bootstrap-key push):
+			// no token was issued. The message names node IDs
+			// and socket state only, never token material.
+			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		// The token is shown once, in this response only.
+		writeJSON(w, http.StatusOK, struct {
+			Action           string `json:"action"`
+			NodeID           string `json:"node_id"`
+			TokenShownOnce   string `json:"token_shown_once"`
+			TokenFingerprint string `json:"token_fingerprint"`
+			ExpiresAt        string `json:"expires_at"`
+			ConnectAddress   string `json:"connect_address"`
+			ListenPort       int    `json:"listen_port"`
+			ForwardRange     string `json:"forward_range"`
+		}{
+			Action: "issue", NodeID: view.NodeID,
+			TokenShownOnce: token, TokenFingerprint: view.Fingerprint,
+			ExpiresAt:      view.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			ConnectAddress: params.ConnectAddress,
+			ListenPort:     params.ListenPort,
+			ForwardRange:   params.ForwardRange,
+		})
+	case "revoke":
+		if strings.TrimSpace(req.NodeID) == "" {
+			writeAPIError(w, http.StatusBadRequest, "node_id is required")
+			return
+		}
+		if !req.Confirm {
+			writeAPIError(w, http.StatusBadRequest, "confirm must be true to revoke a join token")
+			return
+		}
+		revoked, err := s.revokeJoinToken(r.Context(), strings.TrimSpace(req.NodeID))
+		if err != nil {
+			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Action  string `json:"action"`
+			NodeID  string `json:"node_id"`
+			Revoked bool   `json:"revoked"`
+		}{Action: "revoke", NodeID: strings.TrimSpace(req.NodeID), Revoked: revoked})
+	default:
+		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("unknown mesh action %q: want issue or revoke", req.Action))
 	}
 }

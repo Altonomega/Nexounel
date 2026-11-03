@@ -82,6 +82,33 @@ func main() {
 	}
 	srv := panel.NewServer(cfg, resolvedConfigPath, log)
 	log.Infof("Panel listening on %s", cfg.ListenAddr)
+	// Loopback enrollment API (§3.4): the endpoint the tunnel
+	// server relays bootstrap enrollment to. Empty address =
+	// disabled (bootstrap enrollment unavailable; nodes retry
+	// transiently). A non-loopback address is refused before any
+	// socket is opened: loopback binding is the API's only
+	// authentication boundary. A bind failure is fatal, like the
+	// main listener: serving the UI while enrollment silently
+	// cannot work would mislead the operator.
+	if strings.TrimSpace(cfg.EnrollmentAddr) != "" {
+		if err := panel.ValidateEnrollmentAddr(cfg.EnrollmentAddr); err != nil {
+			fmt.Fprintf(os.Stderr, "Panel startup failed: %v\n", err)
+			os.Exit(1)
+		}
+		enrollListener, err := net.Listen("tcp", cfg.EnrollmentAddr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Panel startup failed: enrollment listen address %s is unavailable: %v\n", cfg.EnrollmentAddr, err)
+			os.Exit(1)
+		}
+		log.Infof("Enrollment API listening on %s (loopback only)", cfg.EnrollmentAddr)
+		go func() {
+			if err := serve(enrollListener, srv.EnrollmentHandler()); err != nil {
+				log.Errorf("Enrollment API stopped: %v", err)
+			}
+		}()
+	} else {
+		log.Infof("Enrollment API disabled: enrollment_addr is not set in the panel config (bootstrap enrollment unavailable)")
+	}
 	if err := serve(listener, srv); err != nil {
 		fmt.Fprintf(os.Stderr, "Panel stopped: %v\n", err)
 		os.Exit(1)

@@ -3,12 +3,14 @@ package panel
 import (
 	"context"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
 )
 
 // This file is the single service layer shared by the dashboard UI and
@@ -29,6 +31,9 @@ type controlClient interface {
 	RemoveNode(ctx context.Context, nodeID string) error
 	RotateKey(ctx context.Context, nodeID, key string) error
 	ListSessions(ctx context.Context) ([]control.SessionSummary, error)
+	ListMesh(ctx context.Context) (control.MeshSnapshot, error)
+	AddBootstrapKey(ctx context.Context, fingerprint, keyHex string, expiresAt time.Time) error
+	RemoveBootstrapKey(ctx context.Context, fingerprint string) error
 }
 
 // realControlClient adapts control.Client to controlClient.
@@ -57,6 +62,18 @@ func (r realControlClient) RotateKey(ctx context.Context, nodeID, key string) er
 
 func (r realControlClient) ListSessions(ctx context.Context) ([]control.SessionSummary, error) {
 	return r.client.ListSessions(ctx)
+}
+
+func (r realControlClient) ListMesh(ctx context.Context) (control.MeshSnapshot, error) {
+	return r.client.ListMesh(ctx)
+}
+
+func (r realControlClient) AddBootstrapKey(ctx context.Context, fingerprint, keyHex string, expiresAt time.Time) error {
+	return r.client.AddBootstrapKey(ctx, fingerprint, keyHex, expiresAt)
+}
+
+func (r realControlClient) RemoveBootstrapKey(ctx context.Context, fingerprint string) error {
+	return r.client.RemoveBootstrapKey(ctx, fingerprint)
 }
 
 func (s *Server) newControlClient(socketPath string) controlClient {
@@ -161,6 +178,144 @@ func (s *Server) liveSessions(ctx context.Context) ([]SessionView, ControlSocket
 		}
 	}
 	return sessionViews(summaries), state
+}
+
+// MeshMemberView is one mesh member for display: the enforced table
+// row merged with the member's last heartbeat (a heartbeat-only
+// member — heard from but not yet in the table — reports PENDING
+// with zero weight and zero tenure). LastSeenAgoSeconds is the
+// heartbeat age at view time; a member whose heartbeats stop ages
+// in place until the mother marks it SUSPECT/DOWN, which the State
+// field then reports.
+type MeshMemberView struct {
+	ID                 string         `json:"id"`
+	State              mesh.NodeState `json:"state"`
+	CapacityBps        float64        `json:"capacity_bps"`
+	Weight             float64        `json:"weight"`
+	Loss               float64        `json:"loss"`
+	LegRTTMs           float64        `json:"leg_rtt_ms"`
+	LegOK              bool           `json:"leg_ok"`
+	TenureSeq          uint64         `json:"tenure_seq"`
+	LastSeen           time.Time      `json:"last_seen"`
+	LastSeenAgoSeconds int64          `json:"last_seen_ago_seconds"`
+	ActiveStreams      int            `json:"active_streams"`
+	ForwardPortsBound  int            `json:"forward_ports_bound"`
+	ConfigVersion      uint64         `json:"config_version"`
+	StreamConnected    bool           `json:"stream_connected"`
+	LastAckFor         string         `json:"last_ack_for,omitempty"`
+	LastAckError       string         `json:"last_ack_error,omitempty"`
+}
+
+// MeshView is the mesh state for display: the enforced membership
+// table plus the last heartbeat per member, read through the
+// control socket. Available is false when the socket is absent or
+// dead; Note then carries the unavailable reason and every other
+// field is the zero value — an unavailable mesh is never rendered
+// as an empty mesh. The view carries no key material and no
+// snapshot signatures: SnapshotSigning is a boolean only.
+type MeshView struct {
+	Available       bool               `json:"available"`
+	Note            string             `json:"note,omitempty"`
+	Control         ControlSocketState `json:"control"`
+	Term            string             `json:"term"`
+	TermNumber      uint64             `json:"term_number"`
+	TermDegraded    bool               `json:"term_degraded"`
+	Version         uint64             `json:"version"`
+	ChiefID         string             `json:"chief_id"`
+	SnapshotSigning bool               `json:"snapshot_signing"`
+	GeneratedAt     time.Time          `json:"generated_at"`
+	Members         []MeshMemberView   `json:"members"`
+}
+
+func meshViews(snap control.MeshSnapshot, state ControlSocketState) MeshView {
+	view := MeshView{
+		Available: true, Control: state,
+		Term: snap.Table.Term.String(), TermNumber: snap.Table.Term.Number,
+		TermDegraded: snap.Table.Term.Degraded, Version: snap.Table.Version,
+		ChiefID: snap.Table.ChiefID, SnapshotSigning: snap.SnapshotSigning,
+		GeneratedAt: snap.GeneratedAt,
+		Members:     []MeshMemberView{},
+	}
+	now := time.Now()
+	byID := make(map[string]*MeshMemberView, len(snap.Table.Members)+len(snap.Heartbeats))
+	for _, m := range snap.Table.Members {
+		byID[m.ID] = &MeshMemberView{
+			ID: m.ID, State: m.State, CapacityBps: m.CapacityBps,
+			Weight: snap.Table.Weights[m.ID], Loss: m.Loss,
+			LegRTTMs: m.LegRTTMs, LegOK: m.LegOK, TenureSeq: m.TenureSeq,
+		}
+	}
+	for _, hb := range snap.Heartbeats {
+		v, ok := byID[hb.NodeID]
+		if !ok {
+			v = &MeshMemberView{ID: hb.NodeID}
+			byID[hb.NodeID] = v
+		}
+		// The heartbeat is the fresher liveness/capacity record;
+		// the table row supplies state, weight, and tenure. A
+		// heartbeat-only member keeps the state the mother
+		// reported for it (PENDING when the table does not list
+		// it) and the heartbeat's capacity.
+		if v.State == "" {
+			v.State = hb.State
+		}
+		v.CapacityBps = hb.CapacityBps
+		v.Loss = hb.Loss
+		v.LegRTTMs = hb.LegRTTMs
+		v.LegOK = hb.LegOK
+		v.LastSeen = hb.LastSeen
+		if !hb.LastSeen.IsZero() {
+			v.LastSeenAgoSeconds = int64(now.Sub(hb.LastSeen).Seconds())
+			if v.LastSeenAgoSeconds < 0 {
+				v.LastSeenAgoSeconds = 0
+			}
+		}
+		v.ActiveStreams = hb.ActiveStreams
+		v.ForwardPortsBound = hb.ForwardPortsBound
+		v.ConfigVersion = hb.ConfigVersion
+		v.StreamConnected = hb.StreamConnected
+		v.LastAckFor = hb.LastAckFor
+		v.LastAckError = hb.LastAckError
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		view.Members = append(view.Members, *byID[id])
+	}
+	return view
+}
+
+// liveMesh returns the mesh view via the control socket, or an
+// unavailable view plus the degraded socket state when the socket
+// is absent or dead. It never returns an error: callers render the
+// state, following the liveSessions pattern exactly.
+func (s *Server) liveMesh(ctx context.Context) MeshView {
+	state := s.controlSocketState(ctx)
+	if !state.Available {
+		note := state.Error
+		if !state.Configured {
+			note = controlSocketNotConfiguredNote
+		}
+		return MeshView{Control: state, Note: note, Members: []MeshMemberView{}}
+	}
+	path, _ := s.resolveControlSocketPath()
+	listCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	snap, err := s.newControlClient(path).ListMesh(listCtx)
+	if err != nil {
+		return MeshView{
+			Control: ControlSocketState{
+				Configured: true,
+				Error:      "unavailable (control socket error: " + err.Error() + ")",
+			},
+			Note:    "unavailable (control socket error: " + err.Error() + ")",
+			Members: []MeshMemberView{},
+		}
+	}
+	return meshViews(snap, state)
 }
 
 // ConfigFileState reports whether the server and node config files
@@ -279,8 +434,10 @@ func (s *Server) loadDashboard(ctx context.Context) statusContent {
 	content := statusContent{
 		Health: health, Nodes: nodes, Resolver: resolver,
 		Control: ctrl, Sessions: sessions,
-		Compression: loadCompressionStatus(s.cfg.ServerConfig, s.cfg.NodeConfig),
-		ConfigFiles: s.configFileState(),
+		Compression:  loadCompressionStatus(s.cfg.ServerConfig, s.cfg.NodeConfig),
+		ConfigFiles:  s.configFileState(),
+		Mesh:         s.liveMesh(ctx),
+		PendingJoins: s.pendingJoinViews(ctx),
 	}
 	if regErr != nil {
 		content.RegistryError = regErr.Error()

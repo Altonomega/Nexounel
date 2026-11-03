@@ -42,6 +42,24 @@ type Config struct {
 	NodeBinary    string `toml:"node_binary"`
 	ResolversFile string `toml:"resolvers_file"`
 
+	// MeshSecretFile holds the mesh-wide control secret (§8.3):
+	// one secret shared by every enrolled node, used only for
+	// peer-control HMACs. The panel generates it on first use
+	// (0600) when the file is absent; the enrollment API issues
+	// the same value to every node. It is never a data-plane key.
+	MeshSecretFile string `toml:"mesh_secret_file"`
+
+	// EnrollmentAddr is the loopback listen address of the
+	// enrollment API (§3.4): the endpoint the tunnel server's
+	// enrollment handler relays bootstrap requests to (see
+	// ENROLLMENT_ISSUER_URL in the server config). Empty
+	// (default) = disabled: the panel serves no enrollment API
+	// and bootstrap enrollment is unavailable. A non-empty
+	// value must be a loopback address (127.0.0.0/8, ::1, or
+	// localhost); anything else is refused, because loopback
+	// binding is the API's only authentication boundary.
+	EnrollmentAddr string `toml:"enrollment_addr"`
+
 	// KnownHosts maps "host:port" to the accepted SSH host-key fingerprint
 	// (SHA256:...). Fingerprints are public identifiers, not secrets.
 	KnownHosts map[string]string `toml:"known_hosts"`
@@ -50,15 +68,16 @@ type Config struct {
 // DefaultConfig returns the panel defaults from the Phase 2 contract.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:    "0.0.0.0:18081",
-		ServerConfig:  "/opt/nexounel/nexounel-server.toml",
-		RegistryFile:  "/opt/nexounel/nodes.toml",
-		MetricsAddr:   "127.0.0.1:9090",
-		LogTailLines:  100,
-		NodeConfig:    "/opt/nexounel/nexounel-node.toml",
-		NodeBinary:    "/opt/nexounel/nexounel-node",
-		ResolversFile: "/opt/nexounel/client_resolvers.txt",
-		KnownHosts:    map[string]string{},
+		ListenAddr:     "0.0.0.0:18081",
+		ServerConfig:   "/opt/nexounel/nexounel-server.toml",
+		RegistryFile:   "/opt/nexounel/nodes.toml",
+		MetricsAddr:    "127.0.0.1:9090",
+		LogTailLines:   100,
+		NodeConfig:     "/opt/nexounel/nexounel-node.toml",
+		NodeBinary:     "/opt/nexounel/nexounel-node",
+		ResolversFile:  "/opt/nexounel/client_resolvers.txt",
+		MeshSecretFile: "/opt/nexounel/mesh-control-secret.key",
+		KnownHosts:     map[string]string{},
 	}
 }
 
@@ -87,6 +106,9 @@ func (c *Config) applyDefaults() {
 	}
 	if strings.TrimSpace(c.ResolversFile) == "" {
 		c.ResolversFile = def.ResolversFile
+	}
+	if strings.TrimSpace(c.MeshSecretFile) == "" {
+		c.MeshSecretFile = def.MeshSecretFile
 	}
 	if c.KnownHosts == nil {
 		c.KnownHosts = map[string]string{}
@@ -173,6 +195,9 @@ func ValidateConfig(cfg Config) error {
 	if _, err := net.ResolveTCPAddr("tcp", cfg.MetricsAddr); err != nil {
 		return fmt.Errorf("invalid metrics_addr %q: %w", cfg.MetricsAddr, err)
 	}
+	if err := ValidateEnrollmentAddr(cfg.EnrollmentAddr); err != nil {
+		return err
+	}
 	for host, fp := range cfg.KnownHosts {
 		if strings.TrimSpace(host) == "" || !strings.HasPrefix(fp, "SHA256:") {
 			return fmt.Errorf("invalid known_hosts entry %q: fingerprint must start with SHA256:", host)
@@ -197,6 +222,33 @@ func ValidateWebPath(path string) error {
 		}
 	}
 	return nil
+}
+
+// ValidateEnrollmentAddr checks the enrollment API listen address:
+// empty means disabled (valid); a non-empty value must resolve as a
+// TCP address whose host is loopback (an IP in 127.0.0.0/8 or ::1,
+// or the name "localhost"). The panel refuses to bind the
+// enrollment API anywhere else: loopback binding is its only
+// authentication boundary.
+func ValidateEnrollmentAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid enrollment_addr %q: %w", addr, err)
+	}
+	if _, err := net.ResolveTCPAddr("tcp", addr); err != nil {
+		return fmt.Errorf("invalid enrollment_addr %q: %w", addr, err)
+	}
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("invalid enrollment_addr %q: must be a loopback address (127.0.0.0/8, ::1, or localhost)", addr)
 }
 
 const webPathAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"

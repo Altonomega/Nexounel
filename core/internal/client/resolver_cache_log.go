@@ -10,9 +10,13 @@
 // future runs can start quickly by skipping the full MTU scan.
 //
 // Line format:
-//   <RFC3339>  <ip:port>  <domain>  UP=<n>  DOWN=<n>  UPLOSS=<permille>  DOWNLOSS=<permille>
+//
+//	<RFC3339>  <ip:port>  <domain>  UP=<n>  DOWN=<n>  UPLOSS=<permille>  DOWNLOSS=<permille>
+//
 // Example:
-//   2026-04-20T15:04:05Z  8.8.8.8:53  v.domain.com  UP=64  DOWN=120  UPLOSS=0  DOWNLOSS=50
+//
+//	2026-04-20T15:04:05Z  8.8.8.8:53  v.domain.com  UP=64  DOWN=120  UPLOSS=0  DOWNLOSS=50
+//
 // The UPLOSS/DOWNLOSS tokens are optional; older logs without them still parse.
 // ==============================================================================
 package client

@@ -114,18 +114,42 @@ curl -s -b "$JAR" "$PANEL/$SECRET/api/status"
   fingerprint is available afterwards. Copy it immediately and
   deliver it to the node. A caller-supplied `key` is never echoed
   back.
+- **Mesh state is control-socket state.** `mesh.available` is false
+  when the control socket is not configured or unreachable; `mesh`
+  then carries `note` with the unavailable reason and an empty
+  `members` list — never treat an empty `members` list alone as
+  "no members": check `mesh.available` first. Member `state`
+  `SUSPECT`/`DOWN` with sessions still present means heartbeats
+  stopped (wedged control stream), not health. A member `last_ack`
+  with an error means a config push or rotation order was received
+  but not applied; no ack means it was never acknowledged — never
+  assume an order took effect.
+- **Pending join tokens live in panel memory only.** A panel
+  restart invalidates outstanding tokens (they must be re-issued).
+  Listings carry fingerprints and state only, never token values.
+  A `mesh` `issue` response includes `token_shown_once` exactly
+  once, in that response only — the same shown-once rule as keys.
+- **Related, not part of this API.** Bootstrap enrollment itself
+  runs over a separate loopback-only HTTP API (`POST /enroll`,
+  no session authentication; loopback binding is its boundary)
+  that the tunnel server calls. It is documented in
+  `docs/PHASE3-MILESTONE-2.md` (operator notes), not here: do not
+  call it from an agent session — issue and revoke tokens through
+  `/api/mesh` instead.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Liveness summary: server health, control-socket state, restart flag |
-| `GET` | `/api/status` | Full dashboard state (health, nodes, resolver fleet, sessions, compression, config files) |
+| `GET` | `/api/status` | Full dashboard state (health, nodes, resolver fleet, sessions, compression, config files, mesh, pending joins) |
 | `GET` | `/api/sessions` | Live sessions via the control socket |
 | `GET` | `/api/compression` | Compression status for both sides |
 | `POST` | `/api/compression` | Set compression settings on both config files |
 | `GET` | `/api/registry` | Registry nodes + control-socket state |
 | `POST` | `/api/registry` | `reload` / `add` / `remove` / `rotate` the registry |
+| `GET` | `/api/mesh` | Mesh membership table, heartbeats, and pending join tokens |
+| `POST` | `/api/mesh` | `issue` / `revoke` a join token |
 
 All paths are relative to `<secret-path>`: e.g.
 `<secret-path>/api/status`.
@@ -191,7 +215,11 @@ The whole dashboard as JSON. Fields:
     "node_present": true, "node_parseable": true,
     "control_socket_configured": true
   },
-  "restart_needed": false
+  "restart_needed": false,
+  "mesh": { "...": "see /api/mesh mesh object ..." },
+  "pending_joins": [{"node_id": "node-2", "fingerprint": "a1b2c3d4e5f60718",
+                     "expires_at": "2026-11-04T06:00:00Z", "attempts": 0,
+                     "used": false, "burned": false, "revoked": false}]
 }
 ```
 
@@ -383,23 +411,137 @@ Per action:
 `error` is present when the socket command failed after a
 successful file write; `restart_needed` is then true.
 
+### `GET /api/mesh`
+
+The mesh membership table and pending join tokens. The `mesh`
+object is the same view the dashboard renders (see "Degraded
+states": check `available` before reading `members`).
+
+```json
+{
+  "mesh": {
+    "available": true,
+    "control": {"configured": true, "reachable": true, "available": true},
+    "term": "T2",
+    "term_number": 2,
+    "term_degraded": false,
+    "version": 5,
+    "chief_id": "node-1",
+    "snapshot_signing": false,
+    "generated_at": "2026-11-03T12:00:00Z",
+    "members": [{
+      "id": "node-1", "state": "ACTIVE",
+      "capacity_bps": 1100, "weight": 0.6, "loss": 0.01,
+      "leg_rtt_ms": 12, "leg_ok": true, "tenure_seq": 1,
+      "last_seen": "2026-11-03T11:59:55Z", "last_seen_ago_seconds": 5,
+      "active_streams": 3, "forward_ports_bound": 10,
+      "config_version": 7, "stream_connected": true,
+      "last_ack_for": "config"
+    }]
+  },
+  "pending_joins": [{"node_id": "node-2", "fingerprint": "a1b2c3d4e5f60718",
+                     "expires_at": "2026-11-04T06:00:00Z", "attempts": 0,
+                     "used": false, "burned": false, "revoked": false}]
+}
+```
+
+Notes:
+
+- `term` renders as `T<n>`, with `(degraded)` in the dashboard
+  when `term_degraded` is true (a degraded term comes from the
+  last signed snapshot while the mother link is down; mother
+  tables are normal terms).
+- `weight` is the member's capacity share: zero means it takes no
+  new streams (reserve, suspect, down, or no capacity reported
+  yet). Members heard from but not yet in the enforced table
+  appear with state `PENDING` and weight zero.
+- `snapshot_signing` is a boolean only: it reports whether the
+  mother holds a snapshot-signing key. It never carries key
+  material, and no snapshot key is issued to nodes in this
+  milestone (see `docs/PHASE3-MILESTONE-2.md`, D-9).
+- `last_ack_for` / `last_ack_error` report the member's last
+  control-stream acknowledgement: an error means a config push or
+  rotation order was received but not applied. Absence means no
+  ack was recorded — never assume an order took effect.
+- `pending_joins` is always an array (empty, never `null`).
+  `fingerprint` is the 16-character display fingerprint (a hash),
+  never the token. Expired, used, and burned joins are swept on
+  read, so the list never shows a dead token.
+
+### `POST /api/mesh`
+
+One endpoint, `action` selects the operation. Request body:
+
+```json
+{"action": "issue" | "revoke",
+ "node_id": "node-2",
+ "connect_address": "v.example.invalid",  // issue only, required
+ "listen_port": 18000,                    // issue only, optional (default 18000)
+ "forward_range": "20000-20010",          // issue only, required
+ "ttl_hours": 24,                         // issue only, optional (1-24, default 24)
+ "confirm": true}                         // revoke only, required
+```
+
+Unknown actions and unknown JSON fields are **400**. Validation
+failures (bad node ID, connect address, port, range, or TTL) are
+**400** and issue nothing. An operational failure — the derived
+bootstrap key could not be pushed to the running server over the
+control socket — is **422** and issues nothing: the pending join
+is rolled back, so no unusable token survives.
+
+`issue` response (200):
+
+```json
+{
+  "action": "issue",
+  "node_id": "node-2",
+  "token_shown_once": "…43-character token…",
+  "token_fingerprint": "a1b2c3d4e5f60718",
+  "expires_at": "2026-11-04T06:00:00Z",
+  "connect_address": "v.example.invalid",
+  "listen_port": 18000,
+  "forward_range": "20000-20010"
+}
+```
+
+`token_shown_once` appears exactly once, in this response only:
+copy it immediately and run the node in enroll mode with it. It is
+single-use (one node, then it burns), bound to `node_id`, and
+invalidated by a panel restart. The connect address, listen port,
+and forward range are issued into the node config at enrollment;
+they are the values the operator supplied here, because the
+enrollment request itself carries only identity and token.
+
+`revoke` response (200):
+
+```json
+{"action": "revoke", "node_id": "node-2", "revoked": true}
+```
+
+`revoked: false` means no pending join existed for that node
+(revoking an enrolled node stays a registry removal, not this
+operation). Revocation deletes the pending join and drops its
+pushed bootstrap key; the token can never enroll afterwards.
+
 ## Error summary
 
 | Status | Meaning |
 |---|---|
-| 400 | Invalid JSON, unknown field, unknown registry action, missing `node_id`, `remove` without `confirm`, level out of range (compression) |
+| 400 | Invalid JSON, unknown field, unknown registry/mesh action, missing `node_id`, `remove`/`revoke` without `confirm`, level out of range (compression), invalid join-token parameters |
 | 401 | No session cookie, expired/invalid session, or wrong username — authentication required |
 | 403 | State-changing request without a valid `X-CSRF-Token` header |
 | 404 | Unknown `/api/*` path (JSON) or unknown UI path (plain text) |
 | 405 | Wrong method on a known API path |
-| 422 | Registry/config operation refused or edit validation failed; no file was replaced |
+| 422 | Registry/config operation refused or edit validation failed; no file was replaced; or a join-token bootstrap-key push failed and no token was issued |
 
 ## Security notes
 
 - Keys, passwords, Cloudflare credentials and tokens never appear
   in API output, logs, or error messages — only key fingerprints
-  and node IDs. The one exception is the single `key_shown_once`
-  value in the `add`/`rotate` response that generated it.
+  and node IDs. The exceptions are the single `key_shown_once`
+  value in the `add`/`rotate` response that generated it, and the
+  single `token_shown_once` value in the mesh `issue` response
+  that generated it.
 - The API has no bearer tokens or API keys: the session cookie is
   the credential, scoped to the secret web path, `HttpOnly`, and
   idle-expiring. Treat the cookie and the CSRF token as secrets.

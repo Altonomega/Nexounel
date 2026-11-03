@@ -21,12 +21,22 @@ type stubControlHandler struct {
 	commands []string
 	registry string
 	sessions []control.SessionSummary
+	mesh     *control.MeshSnapshot
+	// bootstrapKeys records fingerprints pushed via
+	// add-bootstrap-key and still present (remove drops them).
+	bootstrapKeys map[string]bool
+	// failCommands makes the named commands fail, to prove
+	// best-effort paths (reload failure during enrollment).
+	failCommands map[string]bool
 }
 
 func (h *stubControlHandler) Handle(ctx context.Context, req control.Request) control.Response {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.commands = append(h.commands, req.Command)
+	if h.failCommands != nil && h.failCommands[req.Command] {
+		return control.Response{Version: control.ProtocolVersion, Error: "stub forced failure for " + req.Command}
+	}
 	switch req.Command {
 	case control.CmdPing:
 		return control.Response{Version: control.ProtocolVersion, OK: true}
@@ -73,9 +83,29 @@ func (h *stubControlHandler) Handle(ctx context.Context, req control.Request) co
 			})
 		}
 		return control.Response{Version: control.ProtocolVersion, OK: true, Data: map[string]any{"sessions": sessions}}
+	case control.CmdListMesh:
+		if h.mesh == nil {
+			return control.Response{Version: control.ProtocolVersion, Error: "mesh state is not available on this server"}
+		}
+		return control.Response{Version: control.ProtocolVersion, OK: true, Data: map[string]any{"mesh": h.mesh}}
+	case control.CmdAddBootstrapKey:
+		if h.bootstrapKeys == nil {
+			h.bootstrapKeys = map[string]bool{}
+		}
+		h.bootstrapKeys[req.Args["fingerprint"]] = true
+		return control.Response{Version: control.ProtocolVersion, OK: true}
+	case control.CmdRemoveBootstrapKey:
+		delete(h.bootstrapKeys, req.Args["fingerprint"])
+		return control.Response{Version: control.ProtocolVersion, OK: true}
 	default:
 		return control.Response{Version: control.ProtocolVersion, Error: "unknown command"}
 	}
+}
+
+func (h *stubControlHandler) hasBootstrapKey(fingerprint string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bootstrapKeys[fingerprint]
 }
 
 func (h *stubControlHandler) seen() []string {

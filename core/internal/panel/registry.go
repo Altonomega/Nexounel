@@ -109,6 +109,30 @@ func ReadRegistryEntries(path string) ([]RegistryEntry, error) {
 	return entries, nil
 }
 
+// RegistryNodeKey reads one node's inline key from the registry
+// file. It exists for idempotent enrollment: a node whose first
+// enrollment wrote the registry but lost the response retries with
+// the same token and must receive the SAME key, not a second one.
+// It returns exists=false when the node is absent, keyFile=true
+// when the node is registered via a key file (the panel cannot
+// re-issue a key it does not hold), and an error for an unreadable
+// registry.
+func RegistryNodeKey(path, id string) (key string, exists bool, keyFile bool, err error) {
+	entries, err := ReadRegistryEntries(path)
+	if err != nil {
+		return "", false, false, err
+	}
+	for _, e := range entries {
+		if e.ID == strings.TrimSpace(id) {
+			if e.Key != "" {
+				return e.Key, true, false, nil
+			}
+			return "", true, e.KeyFile != "", nil
+		}
+	}
+	return "", false, false, nil
+}
+
 func validateNodeID(id string) error {
 	if !nodeIDPattern.MatchString(strings.TrimSpace(id)) {
 		return fmt.Errorf("invalid node id %q: must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}", id)

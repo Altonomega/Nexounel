@@ -82,6 +82,11 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <label for="shownkey">Node key (copy now; it will not be shown again)</label>
 <input type="text" id="shownkey" readonly value="{{.Content.ShownKey}}">
 <p class="muted">Deliver this key to the node before it can connect with it. Keys are never shown again and never logged.</p></div>{{end}}
+{{if .Content.ShownToken}}<div class="card"><h3>Join token (shown once)</h3>
+<p>Node: <code>{{.Content.ShownTokenNodeID}}</code> &middot; Token fingerprint: <code class="mono">{{.Content.ShownTokenFingerprint}}</code> &middot; Expires: <code>{{.Content.ShownTokenExpires}}</code></p>
+<label for="showntoken">Join token (copy now; it will not be shown again)</label>
+<input type="text" id="showntoken" readonly value="{{.Content.ShownToken}}">
+<p class="muted">Run the node in enroll mode with this token (<code>--enroll</code> with <code>--join-token</code>, <code>--join-token-file</code>, or stdin; prefer the file or stdin so the token stays out of shell history). The token is single-use: it enrolls exactly one node, then burns. A panel restart invalidates outstanding tokens. The token value is never logged.</p></div>{{end}}
 <div class="card"><h3>Tunnel / server health</h3>
 {{if .Content.Health.Up}}<p>Server: <strong>up</strong></p>{{else}}<p>Server: <strong>down</strong>{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}</p>{{end}}
 {{with .Content.Health.Details}}<p>Status: {{.Status}} &middot; Uptime: {{.UptimeSeconds}} seconds</p>
@@ -98,6 +103,34 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 {{if .Content.SessionsNote}}<p>{{.Content.SessionsNote}}</p>{{else}}
 {{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}}</td><td>{{.DownloadMTU}}</td><td>{{.ActiveStreams}}</td><td>{{.LastActivity}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}
 {{end}}</div>
+<div class="card"><h3>Mesh</h3>
+{{if .Content.Mesh.Available}}
+<p>Term: <strong>{{.Content.Mesh.Term}}</strong>{{if .Content.Mesh.TermDegraded}} (degraded){{end}} &middot; Table version: {{.Content.Mesh.Version}} &middot; Chief: <strong>{{if .Content.Mesh.ChiefID}}{{.Content.Mesh.ChiefID}}{{else}}none{{end}}</strong> &middot; Snapshot signing: {{if .Content.Mesh.SnapshotSigning}}enabled{{else}}disabled (unsigned tables; degraded derivation unavailable){{end}}</p>
+<p class="muted">Snapshot generated at {{.Content.Mesh.GeneratedAt.Format "2006-01-02 15:04:05 MST"}} &middot; Control socket: configured and reachable</p>
+{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Capacity (B/s)</th><th>Weight</th><th>Loss</th><th>Leg RTT (ms)</th><th>Leg</th><th>Streams</th><th>Forward ports</th><th>Config ver.</th><th>Control stream</th><th>Last heartbeat</th><th>Last ack</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.State}}</td><td>{{printf "%.0f" .CapacityBps}}</td><td>{{printf "%.3f" .Weight}}</td><td>{{printf "%.3f" .Loss}}</td><td>{{printf "%.1f" .LegRTTMs}}</td><td>{{if .LegOK}}ok{{else}}down{{end}}</td><td>{{.ActiveStreams}}</td><td>{{.ForwardPortsBound}}</td><td>{{.ConfigVersion}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td><td>{{if .LastAckFor}}{{.LastAckFor}}{{if .LastAckError}}: {{.LastAckError}}{{end}}{{else}}&mdash;{{end}}</td></tr>{{end}}</table>{{else}}<p>No members in the enforced table and no heartbeats recorded.</p>{{end}}
+<p class="muted">Weights are capacity shares: zero means the member takes no new streams (reserve, suspect, down, or no capacity reported yet). A member shown SUSPECT or DOWN while its sessions still appear above means heartbeats stopped, not that the node is healthy — the control stream is wedged. An ack error means a config push or rotation order was received but not applied; an absent ack means the order was never acknowledged. Snapshot signing disabled means nodes hold no verified snapshot and cannot derive a degraded chief if the mother link drops.</p>
+{{else}}<p>{{.Content.Mesh.Note}}</p>{{end}}</div>
+<div class="card"><h3>Join tokens</h3>
+<p class="muted">Single-use, 24-hour maximum, bound to one node ID. Issuing pushes the token's bootstrap key to the running server; revoking, consuming, or expiry removes it. Tokens live in panel memory only: a panel restart invalidates outstanding tokens.</p>
+{{if .Content.PendingJoins}}<table><tr><th>Node</th><th>Fingerprint</th><th>Expires</th><th>Attempts</th><th>State</th><th>Action</th></tr>{{range .Content.PendingJoins}}<tr><td>{{.NodeID}}</td><td class="mono">{{.Fingerprint}}</td><td>{{.ExpiresAt.Format "2006-01-02 15:04:05 MST"}}</td><td>{{.Attempts}}</td><td>{{if .Used}}used{{else if .Burned}}burned{{else if .Revoked}}revoked{{else}}pending{{end}}</td><td><form method="post" action="{{$.WebPath}}/mesh/revoke" style="display:inline">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="node_id" value="{{.NodeID}}">
+<label style="display:inline"><input type="checkbox" name="confirm" value="yes" required> confirm</label>
+<button type="submit">Revoke</button></form></td></tr>{{end}}</table>{{else}}<p>No pending join tokens.</p>{{end}}
+<form method="post" action="{{.WebPath}}/mesh/issue">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label for="mi-node">Node ID (the token enrolls exactly this node)</label>
+<input type="text" id="mi-node" name="node_id" required>
+<label for="mi-addr">Connect address (tunnel subdomain, issued into the node config)</label>
+<input type="text" id="mi-addr" name="connect_address" placeholder="v.example.invalid" required>
+<label for="mi-port">Node listen port</label>
+<input type="number" id="mi-port" name="listen_port" value="18000" min="1" max="65535">
+<label for="mi-range">Forward range (lo-hi)</label>
+<input type="text" id="mi-range" name="forward_range" placeholder="20000-20010" required>
+<label for="mi-ttl">Token lifetime (hours, 1&ndash;24)</label>
+<input type="number" id="mi-ttl" name="ttl_hours" value="24" min="1" max="24">
+<p><button type="submit">Issue join token (shown once)</button></p>
+</form></div>
 <div class="card"><h3>Nodes</h3>
 {{if .Content.RegistryError}}<p>Registry: unavailable ({{.Content.RegistryError}})</p>{{else}}
 <table><tr><th>Node</th><th>Key fingerprint</th></tr>{{range .Content.Nodes}}<tr><td>{{.ID}}</td><td class="mono">{{.Fingerprint}}</td></tr>{{end}}</table>

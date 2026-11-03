@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 )
 
@@ -25,6 +26,16 @@ type Server struct {
 
 	pendingMu sync.Mutex
 	pending   map[string]PendingNode
+
+	// Join-token state (§3.2, §3.4): the panel-owned pending-join
+	// store plus the issuance parameters recorded per fingerprint
+	// (the config values the enrollment API issues). enrollMu
+	// serializes issuance, revocation, and the enrollment
+	// transaction. The store is in-memory: a panel restart
+	// invalidates outstanding tokens.
+	pendingStore *enroll.PendingStore
+	joinParams   map[string]joinParams
+	enrollMu     sync.Mutex
 
 	restartMu     sync.Mutex
 	restartNeeded bool
@@ -57,11 +68,20 @@ func NewServer(cfg Config, cfgPath string, log *logger.Logger) *Server {
 		cfg: cfg, cfgPath: cfgPath, log: log,
 		sessions: NewSessionStore(), limiter: NewRateLimiter(), jobs: NewJobStore(),
 		pending:        map[string]PendingNode{},
+		pendingStore:   enroll.NewPendingStore(nil),
+		joinParams:     map[string]joinParams{},
 		dnsResolver:    NewUDPResolver(),
 		httpClient:     &http.Client{Timeout: 15 * time.Second},
 		runner:         DefaultCommandRunner,
 		factoryForAddr: func(addr string) TransportFactory { return NewRealTransportFactory(addr) },
 	}
+}
+
+// joinStore returns the panel-owned pending-join store. It is set
+// by NewServer; a nil store (a Server built any other way) means
+// enrollment is unavailable, and callers fail closed.
+func (s *Server) joinStore() *enroll.PendingStore {
+	return s.pendingStore
 }
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
@@ -132,6 +152,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(http.HandlerFunc(s.handleRegistryRemove)).ServeHTTP(w, r)
 	case "/registry/rotate":
 		s.requireAuth(http.HandlerFunc(s.handleRegistryRotate)).ServeHTTP(w, r)
+	case "/mesh/issue":
+		s.requireAuth(http.HandlerFunc(s.handleMeshIssue)).ServeHTTP(w, r)
+	case "/mesh/revoke":
+		s.requireAuth(http.HandlerFunc(s.handleMeshRevoke)).ServeHTTP(w, r)
 	case "/logs":
 		s.requireAuth(http.HandlerFunc(s.handleLogs)).ServeHTTP(w, r)
 	case "/wizard":
@@ -332,6 +356,18 @@ type statusContent struct {
 	SessionsNote string
 	Compression  CompressionStatus
 	ConfigFiles  ConfigFileState
+	Mesh         MeshView
+	PendingJoins []PendingJoinView
+
+	// ShownToken carries a freshly issued join token for exactly
+	// one render (mesh issuance). It is never stored server-side
+	// beyond the pending-join store's hash, and the token value
+	// itself is never logged. ShownTokenExpires is the token's
+	// expiry, preformatted (RFC 3339, UTC).
+	ShownToken            string
+	ShownTokenNodeID      string
+	ShownTokenFingerprint string
+	ShownTokenExpires     string
 
 	// ShownKey carries a freshly generated node key for exactly one
 	// render (add/rotate with a generated key). It is never stored
