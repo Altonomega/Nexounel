@@ -184,6 +184,21 @@ type ClientConfig struct {
 	// enroll mode and read by the peer control port; it is never
 	// used for data-plane sessions.
 	MeshControlSecretFile string `toml:"MESH_CONTROL_SECRET_FILE"`
+	// MeshPeerControlPort is the mesh-private TCP port for peer
+	// control traffic (§8.3): HMAC-authenticated pings and
+	// election announcements between nodes. 0 (default) =
+	// disabled: no listener, no probing. A non-zero port without
+	// a readable mesh control secret is refused at startup (an
+	// unauthenticated control port must never listen).
+	MeshPeerControlPort int `toml:"MESH_PEER_CONTROL_PORT"`
+	// MeshPeers lists the peers to probe for the heartbeat's
+	// reachability view, as comma-separated id=host:port pairs
+	// (e.g. "node-2=203.0.113.7:19443,node-3=198.51.100.9:19443").
+	// Empty = no peer probing. Addresses are operator-configured
+	// in this milestone; mother-distributed peer addresses are
+	// future work. Malformed entries are skipped with a loud
+	// log, never guessed.
+	MeshPeers string `toml:"MESH_PEERS"`
 	// CapacityMargin is the multisession safety factor applied to
 	// measured capacity (0, 1]; default 0.95.
 	CapacityMargin float64 `toml:"CAPACITY_MARGIN"`

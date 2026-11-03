@@ -35,10 +35,78 @@ import (
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/peercontrol"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
 )
 
-// heartbeatSnapshot is the node's measured state for one heartbeat.
+// peerOptions enables the node's peer control port (§8.3). Nil
+// means disabled (the default). ListenAddr overrides the bind
+// address and is a test hook only; production binds
+// ListenIP:Port.
+type peerOptions struct {
+	Port       int
+	ListenAddr string
+	SecretFile string
+	Peers      string
+	ListenIP   string
+}
+
+// peerEntry is one configured peer: an id and a dial address.
+type peerEntry struct {
+	ID   string
+	Addr string
+}
+
+// parseMeshPeers parses the MESH_PEERS value (comma-separated
+// id=host:port pairs). Malformed entries are skipped, never
+// guessed; the caller logs the skip count loudly.
+func parseMeshPeers(s string) (entries []peerEntry, skipped int) {
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, addr, ok := strings.Cut(part, "=")
+		id, addr = strings.TrimSpace(id), strings.TrimSpace(addr)
+		if !ok || id == "" || addr == "" {
+			skipped++
+			continue
+		}
+		if err := multisession.ValidateNodeID(id); err != nil {
+			skipped++
+			continue
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil || host == "" || port == "" {
+			skipped++
+			continue
+		}
+		portNum, err := strconv.Atoi(port)
+		if err != nil || portNum < 1 || portNum > 65535 {
+			skipped++
+			continue
+		}
+		entries = append(entries, peerEntry{ID: id, Addr: addr})
+	}
+	return entries, skipped
+}
+
+// loadPeerSecret reads the mesh control secret file: the trimmed
+// file contents are the HMAC key, in whatever format the panel
+// generated (no format assumption). Short secrets are refused:
+// an unauthenticated control port must never listen.
+func loadPeerSecret(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read mesh control secret file: %w", err)
+	}
+	secret := []byte(strings.TrimSpace(string(raw)))
+	if len(secret) < peercontrol.MinSecretBytes {
+		return nil, fmt.Errorf("mesh control secret is %d bytes, want at least %d", len(secret), peercontrol.MinSecretBytes)
+	}
+	return secret, nil
+}
+
 // The run functions build it from their session state; the agent
 // only stamps identity, term, role, version, and config version.
 type heartbeatSnapshot struct {
@@ -48,6 +116,7 @@ type heartbeatSnapshot struct {
 	ActiveStreams     int
 	Classes           []mesh.ClassCapacity
 	Resolvers         []mesh.ResolverHealth
+	Reachability      []mesh.PeerReachability
 	ForwardPortsBound int
 }
 
@@ -75,6 +144,15 @@ type meshAgent struct {
 	// Buffered 1: a poke never blocks the frame handler, and
 	// coalesced pokes collapse into one immediate heartbeat.
 	notify chan struct{}
+	// peer control (§8.3), when enabled: the listener, the
+	// prober, and the cached reachability the heartbeat reports.
+	peerOpts     *peerOptions
+	peerServer   *peercontrol.Server
+	peerClient   *peercontrol.Client
+	peerEntries  []peerEntry
+	peerListener net.Listener
+	reachMu      sync.Mutex
+	reachability []mesh.PeerReachability
 }
 
 // newMeshAgent builds the agent. The coordinator is node-perspective
@@ -82,8 +160,11 @@ type meshAgent struct {
 // the election milestone issues snapshot keys at enrollment (the
 // table exchange works without it). A coordinator that cannot be
 // built (unreachable with default timeouts) disables the agent
-// rather than failing startup.
-func newMeshAgent(cfg config.ClientConfig, configPath string, overrides config.ClientConfigOverrides, openStream func(ctx context.Context) (net.Conn, error), snapshot func() heartbeatSnapshot, log *logger.Logger) *meshAgent {
+// rather than failing startup. peer, when non-nil with a valid
+// port, enables the peer control port; a bad secret or port
+// disables peer control loudly while the control-stream agent
+// keeps running.
+func newMeshAgent(cfg config.ClientConfig, configPath string, overrides config.ClientConfigOverrides, openStream func(ctx context.Context) (net.Conn, error), snapshot func() heartbeatSnapshot, log *logger.Logger, peer *peerOptions) *meshAgent {
 	coord, err := mesh.NewCoordinator(cfg.NodeID, false, mesh.Timeouts{}, nil)
 	if err != nil {
 		return nil
@@ -100,7 +181,62 @@ func newMeshAgent(cfg config.ClientConfig, configPath string, overrides config.C
 		notify:     make(chan struct{}, 1),
 	}
 	a.appliedVersion = loadAppliedConfigVersion(configPath)
+	a.initPeerControl(peer)
 	return a
+}
+
+// initPeerControl builds the peer control server and client when
+// enabled. Any problem disables peer control with a loud log;
+// the control-stream agent is unaffected.
+func (a *meshAgent) initPeerControl(peer *peerOptions) {
+	if peer == nil || peer.Port <= 0 {
+		return
+	}
+	if peer.Port > 65535 {
+		if a.log != nil {
+			a.log.Warnf("mesh: MESH_PEER_CONTROL_PORT %d out of range; peer control disabled", peer.Port)
+		}
+		return
+	}
+	secretFile := peer.SecretFile
+	if strings.TrimSpace(secretFile) == "" {
+		secretFile = meshControlSecretPath(a.cfg)
+	}
+	secret, err := loadPeerSecret(secretFile)
+	if err != nil {
+		if a.log != nil {
+			a.log.Warnf("mesh: peer control disabled: %v", err)
+		}
+		return
+	}
+	logf := func(format string, args ...any) {
+		if a.log != nil {
+			a.log.Warnf(format, args...)
+		}
+	}
+	srv, err := peercontrol.NewServer(secret, a, logf)
+	if err != nil {
+		if a.log != nil {
+			a.log.Warnf("mesh: peer control disabled: %v", err)
+		}
+		return
+	}
+	srv.SetNodeID(a.nodeID)
+	cli, err := peercontrol.NewClient(secret, a.nodeID)
+	if err != nil {
+		if a.log != nil {
+			a.log.Warnf("mesh: peer control disabled: %v", err)
+		}
+		return
+	}
+	entries, skipped := parseMeshPeers(peer.Peers)
+	if skipped > 0 && a.log != nil {
+		a.log.Warnf("mesh: skipped %d malformed MESH_PEERS entries", skipped)
+	}
+	a.peerServer = srv
+	a.peerClient = cli
+	a.peerEntries = entries
+	a.peerOpts = peer
 }
 
 // poke requests one immediate heartbeat. It never blocks: the
@@ -139,10 +275,131 @@ func storeAppliedConfigVersion(configPath string, v uint64) error {
 	return writeFileAtomic(appliedVersionPath(configPath), []byte(strconv.FormatUint(v, 10)+"\n"), 0o644)
 }
 
+// startPeerControl binds the peer control listener and serves it
+// until ctx ends. A bind failure is logged loudly and disables
+// peer control; the node keeps serving its own users. It returns
+// the bound address for tests and diagnostics.
+func (a *meshAgent) startPeerControl(ctx context.Context) (net.Addr, error) {
+	if a.peerServer == nil || a.peerOpts == nil {
+		return nil, nil
+	}
+	addr := a.peerOpts.ListenAddr
+	if strings.TrimSpace(addr) == "" {
+		addr = net.JoinHostPort(a.peerOpts.ListenIP, strconv.Itoa(a.peerOpts.Port))
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if a.log != nil {
+			a.log.Warnf("mesh: peer control listen on %s failed: %v (peer control disabled)", addr, err)
+		}
+		return nil, err
+	}
+	a.peerListener = ln
+	if a.log != nil {
+		a.log.Infof("mesh: peer control listening on %s", ln.Addr())
+	}
+	go func() {
+		if err := a.peerServer.Serve(ctx, ln); err != nil && a.log != nil {
+			a.log.Warnf("mesh: peer control serve ended: %v", err)
+		}
+	}()
+	return ln.Addr(), nil
+}
+
+// peerProbeLoop probes configured peers on the heartbeat cadence,
+// caching reachability for the next heartbeat. It runs
+// independently of the mother link: peer reachability must survive
+// mother loss.
+func (a *meshAgent) peerProbeLoop(ctx context.Context) {
+	if a.peerClient == nil || len(a.peerEntries) == 0 {
+		return
+	}
+	a.probePeersOnce(ctx)
+	ticker := time.NewTicker(mesh.DefaultTimeouts().HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.probePeersOnce(ctx)
+		}
+	}
+}
+
+// probePeersOnce probes every configured peer once, caches the
+// results, and pokes the heartbeat loop when any peer's
+// reachability flipped (so the mother learns promptly).
+func (a *meshAgent) probePeersOnce(ctx context.Context) {
+	results := make([]mesh.PeerReachability, 0, len(a.peerEntries))
+	for _, entry := range a.peerEntries {
+		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		rtt, err := a.peerClient.Probe(probeCtx, entry.Addr)
+		cancel()
+		res := mesh.PeerReachability{PeerID: entry.ID, LegKind: "peer-control"}
+		if err == nil {
+			res.RTTMs = float64(rtt.Microseconds()) / 1000
+			res.OK = true
+		}
+		results = append(results, res)
+	}
+	a.reachMu.Lock()
+	flipped := len(results) != len(a.reachability)
+	if !flipped {
+		for i := range results {
+			if results[i].OK != a.reachability[i].OK || results[i].PeerID != a.reachability[i].PeerID {
+				flipped = true
+				break
+			}
+		}
+	}
+	a.reachability = results
+	a.reachMu.Unlock()
+	if flipped {
+		a.poke()
+	}
+}
+
+// cachedReachability returns the last probe results for the
+// heartbeat. An empty list means probing is disabled or has not
+// run yet — never fake reachability.
+func (a *meshAgent) cachedReachability() []mesh.PeerReachability {
+	a.reachMu.Lock()
+	defer a.reachMu.Unlock()
+	return append([]mesh.PeerReachability(nil), a.reachability...)
+}
+
+// HandlePing implements peercontrol.Handler: every ping earns a
+// pong. Reachability is measured by the prober, not by the
+// handler; the handler never fails.
+func (a *meshAgent) HandlePing(_ context.Context, _ string) error { return nil }
+
+// HandleAnnounce implements peercontrol.Handler: a peer's signed
+// snapshot is verified against this node's snapshot key and, when
+// valid, recorded as degraded-derivation input. Without a snapshot
+// key (this milestone) every announcement is refused: the node
+// cannot verify what it cannot check, and an unverified snapshot
+// must never become derivation input.
+func (a *meshAgent) HandleAnnounce(_ context.Context, from string, snap mesh.Snapshot) (bool, string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.coord.NoteSignedSnapshot(snap) {
+		if a.log != nil {
+			a.log.Infof("mesh: verified snapshot announcement from %q recorded (term %s)", from, snap.Table.Term)
+		}
+		return true, ""
+	}
+	return false, "snapshot unverifiable: no snapshot verification key"
+}
+
 // Run opens control streams until ctx ends, backing off between
 // attempts. It never returns an error: mesh loss must not stop
-// the node.
+// the node. Peer control starts first and runs independently of
+// the mother link.
 func (a *meshAgent) Run(ctx context.Context) {
+	if _, err := a.startPeerControl(ctx); err == nil {
+		go a.peerProbeLoop(ctx)
+	}
 	backoff := 5 * time.Second
 	for ctx.Err() == nil {
 		conn, err := a.openStream(ctx)
@@ -215,6 +472,7 @@ func (a *meshAgent) serve(ctx context.Context, conn net.Conn) {
 // the write deadline bounds it.
 func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 	snap := a.snapshot()
+	snap.Reachability = a.cachedReachability()
 	a.mu.Lock()
 	term := a.coord.Current().Term
 	role := "plain"
@@ -235,6 +493,7 @@ func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 		ActiveStreams:     snap.ActiveStreams,
 		Classes:           snap.Classes,
 		Resolvers:         snap.Resolvers,
+		Reachability:      snap.Reachability,
 		ForwardPortsBound: snap.ForwardPortsBound,
 		ConfigVersion:     version,
 		SentAt:            time.Now().UTC(),

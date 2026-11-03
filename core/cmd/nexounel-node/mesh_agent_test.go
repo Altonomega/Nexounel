@@ -14,6 +14,7 @@ import (
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/peercontrol"
 )
 
 func TestHeartbeatCapacityAggregates(t *testing.T) {
@@ -58,7 +59,7 @@ func meshTestAgent(t *testing.T, dir string) (*meshAgent, config.ClientConfig, c
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil)
+	agent := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil, nil)
 	if agent == nil {
 		t.Fatal("newMeshAgent must succeed with default timeouts")
 	}
@@ -105,7 +106,7 @@ func TestAgentConfigPushAppliesAndPersists(t *testing.T) {
 	}
 	// A fresh agent loads the applied version from disk (the
 	// version file is separate from the config file).
-	agent2 := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil)
+	agent2 := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil, nil)
 	if agent2 == nil || agent2.appliedVersion != 1 {
 		t.Fatalf("reloaded applied version = %v, want 1", agent2)
 	}
@@ -346,6 +347,149 @@ func TestAgentStreamExchange(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent serve did not exit after the stream closed")
+	}
+}
+
+func TestParseMeshPeers(t *testing.T) {
+	entries, skipped := parseMeshPeers("node-2=203.0.113.7:19443, node-3=198.51.100.9:19444")
+	if skipped != 0 || len(entries) != 2 {
+		t.Fatalf("entries=%+v skipped=%d", entries, skipped)
+	}
+	if entries[0].ID != "node-2" || entries[0].Addr != "203.0.113.7:19443" {
+		t.Errorf("entry[0] = %+v", entries[0])
+	}
+	// Malformed entries are skipped, never guessed.
+	_, skipped = parseMeshPeers("node-2=203.0.113.7:19443,BAD ID=1.2.3.4:5,node-3=no-port,node-4=1.2.3.4:0,node-5=1.2.3.4:99999,=1.2.3.4:5,node-6=")
+	if skipped != 6 {
+		t.Fatalf("skipped = %d, want 6", skipped)
+	}
+	if _, skipped := parseMeshPeers(""); skipped != 0 {
+		t.Errorf("empty peers skipped = %d", skipped)
+	}
+}
+
+func TestLoadPeerSecret(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret.key")
+	if _, err := loadPeerSecret(path); err == nil {
+		t.Fatal("missing secret file must fail")
+	}
+	if err := os.WriteFile(path, []byte("short\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPeerSecret(path); err == nil {
+		t.Fatal("short secret must be refused")
+	}
+	if err := os.WriteFile(path, []byte("  a-secret-of-sufficient-length-32b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := loadPeerSecret(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secret) != "a-secret-of-sufficient-length-32b" {
+		t.Fatalf("secret = %q (whitespace must be trimmed)", secret)
+	}
+}
+
+// TestAgentPeerControlSelfProbe exercises the peer port end to
+// end: the agent listens on loopback, probes itself as a configured
+// peer, and refuses an announcement it cannot verify (no snapshot
+// key in this milestone).
+func TestAgentPeerControlSelfProbe(t *testing.T) {
+	dir := t.TempDir()
+	configPath, resolversPath, _ := writeEnrollTestBootstrapConfig(t, dir)
+	overrides := config.ClientConfigOverrides{ResolversFilePath: &resolversPath}
+	cfg, err := config.LoadClientConfigWithOverrides(configPath, overrides)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(dir, "mesh-control-secret.key")
+	secret := []byte("peer-test-mesh-control-secret-32")
+	if err := os.WriteFile(secretPath, append(append([]byte{}, secret...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	peer := &peerOptions{
+		Port:       19443,
+		ListenAddr: "127.0.0.1:0",
+		SecretFile: secretPath,
+		ListenIP:   "127.0.0.1",
+	}
+	agent := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil, peer)
+	if agent == nil {
+		t.Fatal("agent must build")
+	}
+	if agent.peerServer == nil || agent.peerClient == nil {
+		t.Fatal("peer control must be enabled with a valid secret")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, err := agent.startPeerControl(ctx)
+	if err != nil {
+		t.Fatalf("startPeerControl: %v", err)
+	}
+	// Probe self as a configured peer.
+	agent.peerEntries = []peerEntry{{ID: "node-1", Addr: addr.String()}}
+	agent.probePeersOnce(ctx)
+	reach := agent.cachedReachability()
+	if len(reach) != 1 || !reach[0].OK || reach[0].PeerID != "node-1" || reach[0].LegKind != "peer-control" {
+		t.Fatalf("reachability = %+v", reach)
+	}
+	if reach[0].RTTMs <= 0 {
+		t.Errorf("rtt = %v, want positive", reach[0].RTTMs)
+	}
+	// A peer probe of an unconfigured (dead) address reports
+	// unreachable, honestly.
+	agent.peerEntries = []peerEntry{{ID: "node-9", Addr: "127.0.0.1:1"}}
+	agent.probePeersOnce(ctx)
+	reach = agent.cachedReachability()
+	if len(reach) != 1 || reach[0].OK {
+		t.Fatalf("dead peer reachability = %+v", reach)
+	}
+	// An announcement the node cannot verify (no snapshot key)
+	// is refused.
+	cli, err := peercontrol.NewClient(secret, "node-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := mesh.SignSnapshot(mesh.Table{Term: mesh.Term{Number: 1}, Version: 1}, []byte("some-signing-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, reason, err := cli.Announce(ctx, addr.String(), snap)
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	if accepted {
+		t.Error("an announcement without a verification key must be refused")
+	}
+	if reason == "" {
+		t.Error("a refusal must carry a reason")
+	}
+}
+
+func TestAgentPeerControlDisabledWithoutSecret(t *testing.T) {
+	dir := t.TempDir()
+	configPath, resolversPath, _ := writeEnrollTestBootstrapConfig(t, dir)
+	overrides := config.ClientConfigOverrides{ResolversFilePath: &resolversPath}
+	cfg, err := config.LoadClientConfigWithOverrides(configPath, overrides)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A port with no secret file: peer control stays disabled,
+	// loudly, while the agent itself still builds.
+	peer := &peerOptions{Port: 19443, SecretFile: filepath.Join(dir, "missing.key"), ListenIP: "127.0.0.1"}
+	agent := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil, peer)
+	if agent == nil {
+		t.Fatal("agent must build")
+	}
+	if agent.peerServer != nil || agent.peerClient != nil {
+		t.Error("peer control without a secret must stay disabled")
+	}
+	// Port 0 = disabled, no secret needed.
+	agent2 := newMeshAgent(cfg, configPath, overrides, nil, func() heartbeatSnapshot { return heartbeatSnapshot{} }, nil, &peerOptions{Port: 0, ListenIP: "127.0.0.1"})
+	if agent2 == nil || agent2.peerServer != nil {
+		t.Fatal("port 0 must disable peer control")
 	}
 }
 

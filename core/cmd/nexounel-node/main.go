@@ -182,9 +182,20 @@ func runSingleSession(ctx context.Context, configPath string, overrides config.C
 
 // startMeshAgent builds and starts the mesh control agent, or logs
 // loudly and continues without it when the agent cannot be built.
-// The mesh must never take the tunnel down with it.
+// The mesh must never take the tunnel down with it. Peer control
+// (§8.3) is enabled from the node config when a port is set; a
+// bad secret or port disables peer control only.
 func startMeshAgent(ctx context.Context, configPath string, overrides config.ClientConfigOverrides, cfg config.ClientConfig, log *logger.Logger, openStream func(ctx context.Context) (net.Conn, error), snapshot func() heartbeatSnapshot) {
-	agent := newMeshAgent(cfg, configPath, overrides, openStream, snapshot, log)
+	var peer *peerOptions
+	if cfg.MeshPeerControlPort > 0 {
+		peer = &peerOptions{
+			Port:       cfg.MeshPeerControlPort,
+			SecretFile: meshControlSecretPath(cfg),
+			Peers:      cfg.MeshPeers,
+			ListenIP:   cfg.ListenIP,
+		}
+	}
+	agent := newMeshAgent(cfg, configPath, overrides, openStream, snapshot, log, peer)
 	if agent == nil {
 		if log != nil {
 			log.Warnf("mesh: control agent unavailable; running standalone (no heartbeats, no table enforcement)")
