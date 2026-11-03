@@ -89,7 +89,7 @@ mk_uname_stub() {
 build_minbin() {
     local dir="$1" tool
     mkdir -p "$dir"
-    for tool in bash sh env tar gzip sha256sum install mktemp grep awk sed date cp mkdir chmod rm head sort tr id python3 basename cat ls; do
+    for tool in bash sh env tar gzip sha256sum install mktemp grep awk sed date cp mkdir chmod rm head sort tr uname id python3 basename cat ls; do
         ln -sf "$(command -v "$tool")" "$dir/$tool"
     done
     for tool in curl wget systemctl; do
@@ -283,7 +283,13 @@ fi
 printf '== case: install/uninstall round-trip preserves pre-seeded config ==\n'
 RT_DEST="$T/rt-dest"
 mkdir -p "$RT_DEST/opt/nexounel"
-printf '# sentinel config — must survive install and uninstall\n' >"$RT_DEST/opt/nexounel/nexounel-server.toml"
+# Pre-seed a VALID server config (the bundle sample plus a sentinel
+# comment): the installer preserves existing configs and then runs
+# nexounel-server -check-config against them, so a sentinel-only
+# file would correctly fail validation. The sentinel comment proves
+# the file itself was preserved byte-for-byte.
+cp "$T/extract/$TOP/configs/nexounel-server.toml" "$RT_DEST/opt/nexounel/nexounel-server.toml"
+printf '# sentinel config — must survive install and uninstall\n' >>"$RT_DEST/opt/nexounel/nexounel-server.toml"
 printf 'sentinel-key\n' >"$RT_DEST/opt/nexounel/node.key"
 RT_SHA="$(sha256sum "$BUNDLE_TAR" | awk '{print $1}')"
 "$REPO_ROOT/install/install.sh" --mother --node --tarball "$BUNDLE_TAR" --sha256 "$RT_SHA" --destdir "$RT_DEST" --non-interactive >"$T/rt-install.log" 2>&1
