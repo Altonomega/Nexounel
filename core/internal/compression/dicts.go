@@ -31,6 +31,19 @@ const (
 	// decode old frames against the wrong dictionary.
 	DictionaryVersion = "v1"
 
+	// DefaultDictLevel is the zstd level used when dictionaries are
+	// enabled and no explicit level was configured (Level == 0).
+	// Level 9 is the measured knee on the 1-core-pinned
+	// benchmarks (see docs/THROUGHPUT-PACK-PROTOTYPE.md): higher
+	// levels buy at most ~1.7% more ratio on bulk corpora, while
+	// L19 costs several times the encode time and, with the long
+	// window, far more heap than the 960 MB target box can spare.
+	// Configure resolves DictEnabled+Level==0 to this value;
+	// explicit levels always win, and with dictionaries OFF
+	// Level 0 still means the legacy SpeedFastest encoder,
+	// byte-for-byte.
+	DefaultDictLevel = 9
+
 	// UploadDictionaryID / DownloadDictionaryID are the dictionary IDs
 	// stored in the trained dictionaries (see dicts/gen). They must be
 	// distinct and non-zero: the decoder keeps both dictionaries
@@ -51,10 +64,11 @@ const (
 	// smallest power of two above the 10 MiB decompression cap, so a
 	// "long" encoder can reference any offset inside any legal
 	// frame. The default windows (4 MiB at SpeedFastest, 8 MiB at
-	// higher levels) already cover most tunnel frames, so the long
-	// window is expected to change little except at SpeedFastest and
-	// on near-cap frames; it costs encoder memory, which the
-	// benchmarks measure.
+	// higher levels) already cover most tunnel frames, and the
+	// 1-core-pinned benchmarks measured ZERO ratio gain from the
+	// long window at every level and corpus, so it stays OFF by
+	// default (see ZSTDOptions.LongEnabled). It costs encoder
+	// memory, which the benchmarks measure.
 	longWindowSize = 16 << 20
 )
 
@@ -75,6 +89,20 @@ const (
 // ZSTD_LONG_ENABLED. The zero value reproduces the pre-pack behavior
 // exactly (SpeedFastest, no dictionary, default window); see
 // Configure.
+//
+// Level rule (enforced by Configure via resolveZSTDOptions):
+//   - Level 0 with dictionaries OFF keeps the legacy SpeedFastest
+//     encoder, byte-for-byte (golden test). It is NOT remapped.
+//   - Level 0 with dictionaries ON resolves to DefaultDictLevel
+//     (9, the measured knee). An operator who sets only
+//     ZSTD_DICT_ENABLED=true therefore gets the production level
+//     without also setting ZSTD_LEVEL; setting ZSTD_LEVEL=9
+//     explicitly is equivalent and recommended in config files so
+//     the effective level is visible.
+//   - Explicit levels 1..22 always win, are clamped as before, and
+//     are mapped through zstd.EncoderLevelFromZstd, which in
+//     klauspost/compress v1.18.5 only distinguishes four buckets
+//     (fastest <3, default 3-5, better 6-9, best >=10).
 type ZSTDOptions struct {
 	// DictEnabled enables the embedded shared dictionaries for zstd
 	// encoding. Decoders always accept both dictionary and
@@ -83,14 +111,33 @@ type ZSTDOptions struct {
 	// version: a peer without it cannot decode dictionary frames
 	// (unknown dictionary ID) and drops those packets. Enabling it
 	// on one end only is a misconfiguration, not a negotiation.
+	//
+	// Dictionary identity is by ID only: upload ID 1, download ID
+	// 2, version "v1", files upload-v1.dict / download-v1.dict.
+	// There is no dict-version negotiation and no content check
+	// beyond the ID (klauspost/compress resolves duplicate IDs
+	// last-wins), so reusing an ID with different dictionary
+	// bytes is FORBIDDEN: a retrained dictionary pair MUST get a
+	// new DictionaryVersion, new file names, and NEW dictionary
+	// IDs, or a peer could silently decode frames against the
+	// wrong dictionary. A peer on a different dictionary version
+	// (different IDs) fails closed with an unknown-dictionary
+	// error instead of producing output; see
+	// TestWrongDictionaryFailsClosed.
 	DictEnabled bool
-	// Level selects the zstd level: 0 keeps the legacy SpeedFastest
-	// encoder; 1..22 is mapped through
-	// zstd.EncoderLevelFromZstd, which in klauspost/compress v1.18.5
-	// only distinguishes four buckets (fastest <3, default 3-5,
-	// better 6-9, best >=10). Out-of-range values are clamped.
+	// Level selects the zstd level; 0 means "default" and is
+	// resolved by Configure as described above (SpeedFastest with
+	// dictionaries off, DefaultDictLevel with dictionaries on).
+	// 1..22 selects an explicit level. Out-of-range values are
+	// clamped by Configure.
 	Level int
 	// LongEnabled turns on the long window (see longWindowSize).
+	// It measured ZERO ratio gain at every level and corpus on
+	// the 1-core-pinned benchmarks, so it defaults OFF (the zero
+	// value) and should stay off unless re-measured on the target
+	// hardware. The option is retained as live, flag-gated code:
+	// it is not dead code and must not be removed on the
+	// assumption that it can never help.
 	LongEnabled bool
 }
 
@@ -108,6 +155,9 @@ var (
 )
 
 func zstdEncoderOptions(opts ZSTDOptions, dict []byte) []zstd.EOption {
+	// Level 0 reaches here only with dictionaries OFF (Configure
+	// resolves DictEnabled+Level==0 to DefaultDictLevel before
+	// pools are built): 0 means the legacy SpeedFastest encoder.
 	level := zstd.SpeedFastest
 	if opts.Level > 0 {
 		level = zstd.EncoderLevelFromZstd(opts.Level)
@@ -145,6 +195,11 @@ func newZstdEncoderPool(opts ZSTDOptions, dict []byte) *sync.Pool {
 }
 
 func newZstdCodecSet(opts ZSTDOptions) *zstdCodecSet {
+	// Resolve once here as well as in Configure so a directly
+	// constructed set obeys the same level rule; resolution is
+	// idempotent, so Configure's resolved options pass through
+	// unchanged.
+	opts = resolveZSTDOptions(opts)
 	set := &zstdCodecSet{options: opts}
 	set.plainEncoder = newZstdEncoderPool(opts, nil)
 	if opts.DictEnabled {
@@ -173,6 +228,27 @@ func newZstdCodecSet(opts ZSTDOptions) *zstdCodecSet {
 	return set
 }
 
+// resolveZSTDOptions is the single place where the Level rule
+// lives: clamp to 0..22, then resolve the dictionary default.
+// With dictionaries OFF, Level 0 stays 0 (the legacy SpeedFastest
+// encoder, byte-for-byte). With dictionaries ON, Level 0 resolves
+// to DefaultDictLevel (9, the measured knee); explicit levels
+// always win. LongEnabled is left untouched: it defaults OFF and
+// measured zero gain, but the option stays available behind its
+// flag. Resolution is idempotent.
+func resolveZSTDOptions(opts ZSTDOptions) ZSTDOptions {
+	if opts.Level < 0 {
+		opts.Level = 0
+	}
+	if opts.Level > 22 {
+		opts.Level = 22
+	}
+	if opts.DictEnabled && opts.Level == 0 {
+		opts.Level = DefaultDictLevel
+	}
+	return opts
+}
+
 // Configure applies throughput-pack zstd settings process-wide. It is
 // safe for concurrent use; encoder/decoder pools are rebuilt from the
 // new settings, so frames already encoded with older settings remain
@@ -181,14 +257,11 @@ func newZstdCodecSet(opts ZSTDOptions) *zstdCodecSet {
 // frames always). Configure is normally called once at startup by the
 // coordinator that owns the config; calling it per frame would
 // rebuild the pools every time. The zero value restores the legacy
-// behavior byte-for-byte (see TestCompressPayloadGoldenByteIdentity).
+// behavior byte-for-byte (see TestCompressPayloadGoldenByteIdentity);
+// DictEnabled with Level 0 resolves to DefaultDictLevel (9) — see
+// resolveZSTDOptions and the ZSTDOptions comment.
 func Configure(opts ZSTDOptions) {
-	if opts.Level < 0 {
-		opts.Level = 0
-	}
-	if opts.Level > 22 {
-		opts.Level = 22
-	}
+	opts = resolveZSTDOptions(opts)
 	zstdConfigMu.Lock()
 	defer zstdConfigMu.Unlock()
 	currentZstdSet = newZstdCodecSet(opts)
