@@ -152,6 +152,21 @@ type ClientConfig struct {
 	UploadCompressionType                 int     `toml:"UPLOAD_COMPRESSION_TYPE"`
 	DownloadCompressionType               int     `toml:"DOWNLOAD_COMPRESSION_TYPE"`
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
+	// Throughput pack (prototype): all default to the pre-pack behavior.
+	// ZSTDDictEnabled ships the trained shared dictionaries with the
+	// zstd codec; ZSTDLevel 0 keeps the current SpeedFastest encoder,
+	// 1..22 selects an explicit zstd level; ZSTDLongEnabled turns on
+	// long-distance matching. PackingEnabled coalesces small outbound
+	// segments up to the probed MTU under PackingMaxDelayMs.
+	// REEnabled turns on the redundancy-elimination layer.
+	ZSTDDictEnabled     bool `toml:"ZSTD_DICT_ENABLED"`
+	ZSTDLevel           int  `toml:"ZSTD_LEVEL"`
+	ZSTDLongEnabled     bool `toml:"ZSTD_LONG_ENABLED"`
+	PackingEnabled      bool `toml:"PACKING_ENABLED"`
+	PackingMaxDelayMs   int  `toml:"PACKING_MAX_DELAY_MS"`
+	PackingMaxBufferBytes int `toml:"PACKING_MAX_BUFFER_BYTES"`
+	REEnabled           bool `toml:"RE_ENABLED"`
+	RECacheMaxMB        int  `toml:"RE_CACHE_MAX_MB"`
 	DataEncryptionMethod                  int     `toml:"DATA_ENCRYPTION_METHOD"`
 	EncryptionKey                         string  `toml:"ENCRYPTION_KEY"`
 	// Node identity (Nexounel per-node keys). When NODE_KEY_FILE is set,
@@ -432,6 +447,14 @@ func defaultClientConfig() ClientConfig {
 		UploadCompressionType:           2,
 		DownloadCompressionType:         2,
 		CompressionMinSize:              compression.DefaultMinSize,
+		ZSTDDictEnabled:                 false,
+		ZSTDLevel:                       0,
+		ZSTDLongEnabled:                 false,
+		PackingEnabled:                  false,
+		PackingMaxDelayMs:               25,
+		PackingMaxBufferBytes:           32768,
+		REEnabled:                       false,
+		RECacheMaxMB:                    128,
 		DataEncryptionMethod:            5,
 		EncryptionKey:                   "",
 		CapacityMargin:                  0.95,
@@ -743,6 +766,23 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	}
 
 	cfg.CompressionMinSize = defaultIntBelow(cfg.CompressionMinSize, 100, compression.DefaultMinSize)
+
+	// Throughput pack: 0 keeps the current zstd encoder; clamp an
+	// explicit level into the range the codec accepts.
+	if cfg.ZSTDLevel < 0 {
+		cfg.ZSTDLevel = 0
+	}
+	if cfg.ZSTDLevel > 22 {
+		cfg.ZSTDLevel = 22
+	}
+	if cfg.PackingMaxDelayMs < 0 {
+		cfg.PackingMaxDelayMs = 0
+	}
+	if cfg.PackingMaxDelayMs > 1000 {
+		cfg.PackingMaxDelayMs = 1000
+	}
+	cfg.PackingMaxBufferBytes = clampInt(defaultIntBelow(cfg.PackingMaxBufferBytes, 1024, 32768), 1024, 1<<20)
+	cfg.RECacheMaxMB = clampInt(defaultIntBelow(cfg.RECacheMaxMB, 1, 128), 1, 512)
 
 	if cfg.ResolverBalancingStrategy < 0 || cfg.ResolverBalancingStrategy > 5 {
 		return cfg, fmt.Errorf("invalid RESOLVER_BALANCING_STRATEGY: %d", cfg.ResolverBalancingStrategy)

@@ -167,6 +167,10 @@ type ServerConfig struct {
 	MaxAllowedClientARQWindowSize          int     `toml:"MAX_ALLOWED_CLIENT_ARQ_WINDOW_SIZE"`
 	MaxAllowedClientARQDataNackMaxGap      int     `toml:"MAX_ALLOWED_CLIENT_ARQ_DATA_NACK_MAX_GAP"`
 	MinAllowedClientCompressionMinSize     int     `toml:"MIN_ALLOWED_CLIENT_COMPRESSION_MIN_SIZE"`
+	// Throughput pack (prototype, reserved): redundancy-elimination
+	// layer flags. Not yet wired on the server side; both default off.
+	REEnabled    bool `toml:"RE_ENABLED"`
+	RECacheMaxMB int  `toml:"RE_CACHE_MAX_MB"`
 	MinAllowedClientARQInitialRTOSeconds   float64 `toml:"MIN_ALLOWED_CLIENT_ARQ_INITIAL_RTO_SECONDS"`
 
 	MaxDNSResponseBytes            int      `toml:"MAX_DNS_RESPONSE_BYTES"`
@@ -375,6 +379,8 @@ func defaultServerConfig() ServerConfig {
 		MinVPNLabelLength:                 3,
 		SupportedUploadCompressionTypes:   []int{0, 1, 2, 3},
 		SupportedDownloadCompressionTypes: []int{0, 1, 2, 3},
+		REEnabled:                         false,
+		RECacheMaxMB:                      128,
 		ARecordDataDelivery:               true,
 		AAAARecordDataDelivery:            true,
 		DataEncryptionMethod:              3,
@@ -757,6 +763,7 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 
 	cfg.SupportedUploadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedUploadCompressionTypes)
 	cfg.SupportedDownloadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedDownloadCompressionTypes)
+	cfg.RECacheMaxMB = clampInt(defaultIntBelow(cfg.RECacheMaxMB, 1, 128), 1, 512)
 
 	if cfg.DataEncryptionMethod < 3 || cfg.DataEncryptionMethod > 5 {
 		return cfg, fmt.Errorf("invalid DATA_ENCRYPTION_METHOD: %d (valid: 3, 4, 5 AES-GCM only)", cfg.DataEncryptionMethod)
