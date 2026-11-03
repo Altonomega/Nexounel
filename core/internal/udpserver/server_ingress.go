@@ -54,7 +54,7 @@ func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacke
 	// for the configured AES-GCM method. A frame encrypted with any other
 	// method fails authentication here and is answered with no data.
 	startIdx := int(s.preferredCodec.Load())
-	vpnPacket, codecIdx, err := VpnProto.ParseInflatedFromLabelsAnyMatching(decision.Labels, s.codecs, startIdx, s.matchesInboundPacketCandidate)
+	vpnPacket, codecIdx, err := VpnProto.ParseInflatedFromLabelsAnyMatching(decision.Labels, s.codecSnapshot(), startIdx, s.matchesInboundPacketCandidate)
 	if err != nil {
 		if errors.Is(err, VpnProto.ErrInvalidFragmentInfo) {
 			s.fragmentInvalidHeader.Add(1)

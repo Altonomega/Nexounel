@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
 	dnsCache "github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
 	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
 	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
@@ -42,20 +43,33 @@ const (
 
 var preSessionPacketTypes = buildPreSessionPacketTypes()
 
+// codecSet is one installed codec configuration: the codecs to trial
+// at ingress, with the parallel registry node IDs used to attribute
+// sessions to the node whose key decrypted the session init.
+type codecSet struct {
+	codecs  []*security.Codec
+	nodeIDs []string
+}
+
 type Server struct {
-	embeddedDialContext      func(context.Context, string, string) (net.Conn, error)
-	embeddedDNSExchange      func(context.Context, []byte) ([]byte, error)
-	embeddedAllowed          func() bool
-	embeddedDNSCacheMu       sync.Mutex
-	embeddedDNSCache         map[string]embeddedDNSCacheEntry
-	cfg                      config.ServerConfig
-	log                      *logger.Logger
-	codec                    *security.Codec
-	codecs                   []*security.Codec  // one codec: the configured method, or one per registry node
-	// nodeIDs parallels codecs when the server runs in node-registry
-	// mode: nodeIDs[i] is the registry ID whose key built codecs[i].
-	// Empty in single shared-key mode.
-	nodeIDs                  []string
+	embeddedDialContext func(context.Context, string, string) (net.Conn, error)
+	embeddedDNSExchange func(context.Context, []byte) ([]byte, error)
+	embeddedAllowed     func() bool
+	embeddedDNSCacheMu  sync.Mutex
+	embeddedDNSCache    map[string]embeddedDNSCacheEntry
+	cfg                 config.ServerConfig
+	log                 *logger.Logger
+	codec               *security.Codec
+	// installed is the current codec configuration: one codec (the
+	// configured method) in single shared-key mode, or one codec
+	// per registry node in node-registry mode, with parallel node
+	// IDs (nodeIDs[i] is the registry ID whose key built
+	// codecs[i]; empty in single shared-key mode). It is an atomic
+	// pointer so the control socket can swap the set under traffic
+	// without stopping the server: readers load one consistent
+	// snapshot per packet, and sessions already established keep
+	// the codec they were created with.
+	installed                atomic.Pointer[codecSet]
 	preferredCodec           atomic.Int32       // index into codecs to try first
 	codecAccepted            [6]atomic.Uint64   // successful ingress frames by encryption method
 	ingressReplay            ingressReplayCache // authenticated requests already dispatched
@@ -370,7 +384,6 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 		cfg:                    cfg,
 		log:                    log,
 		codec:                  codec,
-		codecs:                 []*security.Codec{codec}, // exactly one codec: the configured method
 		domainMatcher:          domainMatcher.New(cfg.Domain, cfg.MinVPNLabelLength),
 		advertisedDomains:      servedAdvertisedDomains(cfg.Domain, cfg.AdvertiseDomains),
 		zoneNS:                 outOfZoneNameservers(cfg.Domain, cfg.ZoneNS),
@@ -429,12 +442,62 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 		},
 	}
 
+	// Exactly one codec: the configured method. Node-registry mode
+	// replaces this via SetNodeCodecs.
+	srv.installed.Store(&codecSet{codecs: []*security.Codec{codec}})
+
 	// The download ceiling is enforced server-side as well as advertised. The
 	// upload value is retained on the session for accounting; compatible clients
 	// enforce it before constructing subsequent tunnel queries.
 	srv.sessions.setClientMTUCeilings(cfg.MaxAllowedClientUploadMTU, cfg.MaxAllowedClientDownloadMTU)
 
 	return srv
+}
+
+// codecSnapshot returns the codecs of the currently installed set,
+// loaded atomically: every packet trial uses one consistent snapshot
+// even while a control-socket reload swaps the set underneath it.
+func (s *Server) codecSnapshot() []*security.Codec {
+	if s == nil {
+		return nil
+	}
+	set := s.installed.Load()
+	if set == nil {
+		return nil
+	}
+	return set.codecs
+}
+
+// codecSetSnapshot returns the currently installed set (codecs and
+// parallel node IDs) as one atomic snapshot.
+func (s *Server) codecSetSnapshot() *codecSet {
+	if s == nil {
+		return nil
+	}
+	return s.installed.Load()
+}
+
+// installCodecSet validates and atomically installs a codec set. It
+// is the single swap point for SetNodeCodecs and ReloadNodeCodecs:
+// invalid input is rejected without touching the current set (fail
+// closed on the current configuration), and a successful swap resets
+// the preferred-codec trial index, since indexes refer to the old
+// set's order.
+func (s *Server) installCodecSet(codecs []*security.Codec, nodeIDs []string) error {
+	if s == nil || len(codecs) == 0 || len(codecs) != len(nodeIDs) {
+		return errors.New("codec set requires a non-empty codec list with one node ID per codec")
+	}
+	for _, codec := range codecs {
+		if codec == nil {
+			return errors.New("codec set contains a nil codec")
+		}
+	}
+	s.installed.Store(&codecSet{
+		codecs:  append([]*security.Codec(nil), codecs...),
+		nodeIDs: append([]string(nil), nodeIDs...),
+	})
+	s.preferredCodec.Store(0)
+	return nil
 }
 
 // SetNodeCodecs switches the server to node-registry mode: one codec per
@@ -446,19 +509,27 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 //
 // Mismatched or empty arguments are rejected without touching the
 // existing codec set (fail closed on the current configuration).
-// Call before Run; it is not safe to call concurrently with traffic.
+// The swap is atomic: unlike the original implementation, it is safe
+// to call concurrently with traffic — in-flight sessions keep the
+// codec they were created with, and new sessions trial the new set.
 func (s *Server) SetNodeCodecs(codecs []*security.Codec, nodeIDs []string) {
-	if s == nil || len(codecs) == 0 || len(codecs) != len(nodeIDs) {
-		return
-	}
-	for _, codec := range codecs {
-		if codec == nil {
-			return
-		}
-	}
-	s.codecs = codecs
-	s.nodeIDs = append([]string(nil), nodeIDs...)
-	s.preferredCodec.Store(0)
+	_ = s.installCodecSet(codecs, nodeIDs)
+}
+
+// ReloadNodeCodecs is the control-socket reload path: like
+// SetNodeCodecs, but it reports validation failures so the control
+// caller can distinguish a rejected reload from a successful one.
+// It never drops sessions: the swap affects only sessions
+// established afterwards (rotate-key semantics).
+func (s *Server) ReloadNodeCodecs(codecs []*security.Codec, nodeIDs []string) error {
+	return s.installCodecSet(codecs, nodeIDs)
+}
+
+// SwapCodecs implements control.CodecSwapper for the control
+// socket's registry handler: it is ReloadNodeCodecs under the
+// interface's name.
+func (s *Server) SwapCodecs(codecs []*security.Codec, nodeIDs []string) error {
+	return s.ReloadNodeCodecs(codecs, nodeIDs)
 }
 
 // nodeIDForCodec returns the registry ID attributed to a session codec,
@@ -467,12 +538,50 @@ func (s *Server) nodeIDForCodec(codec *security.Codec) string {
 	if s == nil || codec == nil {
 		return ""
 	}
-	for i, c := range s.codecs {
-		if c == codec && i < len(s.nodeIDs) {
-			return s.nodeIDs[i]
+	set := s.installed.Load()
+	if set == nil {
+		return ""
+	}
+	for i, c := range set.codecs {
+		if c == codec && i < len(set.nodeIDs) {
+			return set.nodeIDs[i]
 		}
 	}
 	return ""
+}
+
+// SessionSummaries snapshots live sessions for the control socket's
+// list-sessions command (panel mesh view). It reports identity, class
+// MTUs, age, and stream counts — never keys, never byte counters
+// (those belong to the metrics endpoint).
+func (s *Server) SessionSummaries() []control.SessionSummary {
+	if s == nil || s.sessions == nil {
+		return nil
+	}
+	records := s.sessions.activeRecordsSnapshot()
+	out := make([]control.SessionSummary, 0, len(records))
+	for _, r := range records {
+		if r == nil {
+			continue
+		}
+		last := r.CreatedAt
+		if activity := r.lastActivity(); activity != 0 {
+			last = time.Unix(0, activity)
+		}
+		r.StreamsMu.RLock()
+		streams := len(r.Streams)
+		r.StreamsMu.RUnlock()
+		out = append(out, control.SessionSummary{
+			SessionID:     r.ID,
+			NodeID:        r.NodeID,
+			UploadMTU:     r.UploadMTU,
+			DownloadMTU:   r.DownloadMTU,
+			CreatedAt:     r.CreatedAt,
+			LastActivity:  last,
+			ActiveStreams: streams,
+		})
+	}
+	return out
 }
 
 type throttledLogState struct {

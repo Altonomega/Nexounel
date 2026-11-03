@@ -70,7 +70,8 @@ func (s *Server) admitIngressPacket(packet []byte) bool {
 // A rejected packet still carries its parse and domain decision so the reader
 // can answer in-zone non-tunnel queries without re-parsing.
 func (s *Server) prepareIngressPacket(packet []byte) (preparedIngress, bool) {
-	if s == nil || s.domainMatcher == nil || len(s.codecs) == 0 {
+	codecs := s.codecSnapshot()
+	if s == nil || s.domainMatcher == nil || len(codecs) == 0 {
 		return preparedIngress{}, false
 	}
 	parsed, err := DnsParser.ParseDNSRequestLite(packet)
@@ -83,13 +84,13 @@ func (s *Server) prepareIngressPacket(packet []byte) (preparedIngress, bool) {
 		return rejected, false
 	}
 	startIdx := int(s.preferredCodec.Load())
-	vpnPacket, codecIdx, err := VpnProto.ParseFromLabelsAnyMatching(decision.Labels, s.codecs, startIdx, s.matchesInboundPacketCandidate)
+	vpnPacket, codecIdx, err := VpnProto.ParseFromLabelsAnyMatching(decision.Labels, codecs, startIdx, s.matchesInboundPacketCandidate)
 	if err != nil {
 		// Preserve the deliberately broad admission behavior for malformed or
 		// older pre-session probes. The worker will apply strict semantics, but a
 		// frame that the historical parser accepted must remain dynamically
 		// answerable rather than being rejected merely by the optimization.
-		vpnPacket, codecIdx, err = VpnProto.ParseFromLabelsAny(decision.Labels, s.codecs, startIdx)
+		vpnPacket, codecIdx, err = VpnProto.ParseFromLabelsAny(decision.Labels, codecs, startIdx)
 	}
 	if err == nil && codecIdx != startIdx {
 		s.preferredCodec.Store(int32(codecIdx))
@@ -97,8 +98,8 @@ func (s *Server) prepareIngressPacket(packet []byte) (preparedIngress, bool) {
 	if err != nil {
 		return rejected, false
 	}
-	if codecIdx >= 0 && codecIdx < len(s.codecs) && s.codecs[codecIdx] != nil {
-		method := s.codecs[codecIdx].Method()
+	if codecIdx >= 0 && codecIdx < len(codecs) && codecs[codecIdx] != nil {
+		method := codecs[codecIdx].Method()
 		if method >= 0 && method < len(s.codecAccepted) {
 			s.codecAccepted[method].Add(1)
 		}

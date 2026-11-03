@@ -32,7 +32,7 @@ func budgetTestQuery(t *testing.T, codec *security.Codec, edns uint16, packet Vp
 func budgetTestSession(t *testing.T) (*Server, *sessionRecord, *security.Codec) {
 	t.Helper()
 	s, _ := newSingleMethodTransportTestServer(t, 5, 5)
-	codec := s.codecs[s.preferredCodec.Load()]
+	codec := s.codecSnapshot()[s.preferredCodec.Load()]
 	payload := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 1, 2, 3, 4}
 	record, _, err := s.sessions.findOrCreate(payload, 0, 0, 8, false, codec)
 	if err != nil || record == nil {

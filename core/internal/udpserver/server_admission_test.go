@@ -29,8 +29,8 @@ func TestIngressAdmissionRejectsNoiseBeforeQueue(t *testing.T) {
 	}
 	s := &Server{
 		domainMatcher: domainMatcher.New([]string{"v.example.com"}, 3),
-		codecs:        []*security.Codec{codec},
 	}
+	s.installed.Store(&codecSet{codecs: []*security.Codec{codec}})
 
 	encoded, err := VpnProto.BuildEncoded(VpnProto.BuildOptions{
 		SessionID: 7, PacketType: Enums.PACKET_SESSION_INIT, SessionCookie: 9,
@@ -84,8 +84,8 @@ func TestIngressAdmissionAcceptsConfiguredMethodOnly(t *testing.T) {
 	}
 	s := &Server{
 		domainMatcher: domainMatcher.New([]string{"v.example.com"}, 3),
-		codecs:        []*security.Codec{preferred},
 	}
+	s.installed.Store(&codecSet{codecs: []*security.Codec{preferred}})
 	methods := []int{5}
 
 	queryTypes := []uint16{

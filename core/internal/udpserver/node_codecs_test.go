@@ -17,7 +17,8 @@ func mustTestCodec(t *testing.T, key string) *security.Codec {
 
 func TestSetNodeCodecsAttributesSessions(t *testing.T) {
 	base := mustTestCodec(t, "shared-key-for-node-codecs-test-1")
-	srv := &Server{codecs: []*security.Codec{base}}
+	srv := &Server{}
+	srv.installed.Store(&codecSet{codecs: []*security.Codec{base}})
 	if got := srv.nodeIDForCodec(base); got != "" {
 		t.Fatalf("single-key mode must report empty node ID, got %q", got)
 	}
@@ -25,7 +26,8 @@ func TestSetNodeCodecsAttributesSessions(t *testing.T) {
 	nodeA := mustTestCodec(t, "node-a-key-for-node-codecs-test-1")
 	nodeB := mustTestCodec(t, "node-b-key-for-node-codecs-test-1")
 	srv.SetNodeCodecs([]*security.Codec{nodeA, nodeB}, []string{"node-a", "node-b"})
-	if len(srv.codecs) != 2 || srv.codecs[0] != nodeA || srv.codecs[1] != nodeB {
+	snapshot := srv.codecSnapshot()
+	if len(snapshot) != 2 || snapshot[0] != nodeA || snapshot[1] != nodeB {
 		t.Fatal("SetNodeCodecs did not install the registry codecs")
 	}
 	if got := srv.nodeIDForCodec(nodeA); got != "node-a" {
@@ -44,23 +46,69 @@ func TestSetNodeCodecsAttributesSessions(t *testing.T) {
 
 func TestSetNodeCodecsRejectsMismatchedInput(t *testing.T) {
 	base := mustTestCodec(t, "shared-key-for-node-codecs-test-2")
-	srv := &Server{codecs: []*security.Codec{base}}
+	srv := &Server{}
+	srv.installed.Store(&codecSet{codecs: []*security.Codec{base}})
 	other := mustTestCodec(t, "node-c-key-for-node-codecs-test-2")
 
+	assertUntouched := func() {
+		t.Helper()
+		snapshot := srv.codecSnapshot()
+		if len(snapshot) != 1 || snapshot[0] != base {
+			t.Fatal("rejected input must leave the codec set untouched")
+		}
+	}
+
 	srv.SetNodeCodecs([]*security.Codec{other}, []string{"a", "b"})
-	if len(srv.codecs) != 1 || srv.codecs[0] != base {
-		t.Fatal("length mismatch must leave the codec set untouched")
-	}
+	assertUntouched()
 	srv.SetNodeCodecs(nil, nil)
-	if len(srv.codecs) != 1 || srv.codecs[0] != base {
-		t.Fatal("empty input must leave the codec set untouched")
-	}
+	assertUntouched()
 	srv.SetNodeCodecs([]*security.Codec{nil}, []string{"x"})
-	if len(srv.codecs) != 1 || srv.codecs[0] != base {
-		t.Fatal("nil codec must leave the codec set untouched")
-	}
+	assertUntouched()
 	srv.SetNodeCodecs([]*security.Codec{other, mustTestCodec(t, "node-d-key-for-node-codecs-test-2")}, []string{"only-one"})
-	if len(srv.codecs) != 1 || srv.codecs[0] != base {
-		t.Fatal("more codecs than node IDs must leave the codec set untouched")
+	assertUntouched()
+}
+
+func TestReloadNodeCodecsSwapsAtomically(t *testing.T) {
+	base := mustTestCodec(t, "shared-key-for-node-codecs-test-3")
+	srv := &Server{}
+	srv.installed.Store(&codecSet{codecs: []*security.Codec{base}})
+
+	nodeA := mustTestCodec(t, "node-a-key-for-node-codecs-test-3")
+	nodeB := mustTestCodec(t, "node-b-key-for-node-codecs-test-3")
+	if err := srv.ReloadNodeCodecs([]*security.Codec{nodeA, nodeB}, []string{"node-a", "node-b"}); err != nil {
+		t.Fatalf("ReloadNodeCodecs: %v", err)
+	}
+	if got := srv.nodeIDForCodec(nodeA); got != "node-a" {
+		t.Fatalf("nodeA after reload: got %q", got)
+	}
+	if got := srv.nodeIDForCodec(base); got != "" {
+		t.Fatalf("old codec after reload: got %q, want empty", got)
+	}
+	// The preferred-codec trial index resets: a stale index from a
+	// longer set must not leak into the new set's trial order.
+	srv.preferredCodec.Store(1)
+	if err := srv.ReloadNodeCodecs([]*security.Codec{nodeA}, []string{"node-a"}); err != nil {
+		t.Fatalf("ReloadNodeCodecs: %v", err)
+	}
+	if got := srv.preferredCodec.Load(); got != 0 {
+		t.Fatalf("preferred codec after reload = %d, want 0", got)
+	}
+	// Rejected reloads report errors and leave the set untouched.
+	if err := srv.ReloadNodeCodecs(nil, nil); err == nil {
+		t.Error("empty reload must report an error")
+	}
+	if err := srv.ReloadNodeCodecs([]*security.Codec{nodeA}, []string{"a", "b"}); err == nil {
+		t.Error("mismatched reload must report an error")
+	}
+	if got := srv.nodeIDForCodec(nodeA); got != "node-a" {
+		t.Fatalf("nodeA after rejected reloads: got %q", got)
+	}
+	// A nil server never panics.
+	var nilSrv *Server
+	if err := nilSrv.ReloadNodeCodecs([]*security.Codec{nodeA}, []string{"node-a"}); err == nil {
+		t.Error("nil server reload must report an error")
+	}
+	if got := nilSrv.codecSnapshot(); got != nil {
+		t.Errorf("nil server snapshot = %v, want nil", got)
 	}
 }

@@ -20,7 +20,8 @@ func replayTestQuery(t *testing.T, method int) (*Server, []byte, preparedIngress
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{domainMatcher: domainMatcher.New([]string{"v.example.com"}, 3), codecs: []*security.Codec{codec}}
+	s := &Server{domainMatcher: domainMatcher.New([]string{"v.example.com"}, 3)}
+	s.installed.Store(&codecSet{codecs: []*security.Codec{codec}})
 	query := buildReplayTestQuery(t, codec)
 	prepared, ok := s.prepareIngressPacket(query)
 	if !ok {
@@ -103,7 +104,7 @@ func TestIngressReplayAllowsFreshARQRetransmission(t *testing.T) {
 		s.handleReplayProtectedPacket(query, prepared.parsed, prepared.decision, prepared.packet, dispatch)
 		// Identical plaintext with a fresh AEAD nonce is an ARQ retry, not
 		// a captured-ciphertext replay. Admission itself consumes no nonce.
-		query = buildReplayTestQuery(t, s.codecs[0])
+		query = buildReplayTestQuery(t, s.codecSnapshot()[0])
 		var ok bool
 		prepared, ok = s.prepareIngressPacket(query)
 		if !ok {
