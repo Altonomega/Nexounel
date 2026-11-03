@@ -154,8 +154,10 @@ type ClientConfig struct {
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
 	// Throughput pack (prototype): all default to the pre-pack behavior.
 	// ZSTDDictEnabled ships the trained shared dictionaries with the
-	// zstd codec; ZSTDLevel 0 keeps the current SpeedFastest encoder,
-	// 1..22 selects an explicit zstd level; ZSTDLongEnabled turns on
+	// zstd codec; ZSTDLevel 0 keeps the current SpeedFastest encoder
+	// when dictionaries are OFF, and resolves to level 9 (the
+	// measured knee) when dictionaries are ON; 1..22 selects an
+	// explicit zstd level; ZSTDLongEnabled turns on
 	// long-distance matching. PackingEnabled coalesces small outbound
 	// segments up to the probed MTU under PackingMaxDelayMs.
 	// REEnabled turns on the redundancy-elimination layer.
