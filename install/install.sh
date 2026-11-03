@@ -881,7 +881,11 @@ do_install() {
     workdir="$(mktemp -d)"
     staging="${workdir}/staging"
     mkdir -p "$staging"
-    trap 'rm -rf "$workdir"' EXIT
+    # Guarded: on an early failure the EXIT trap can fire after the
+    # function's locals are out of scope; without the guard, `set -u`
+    # turns the cleanup itself into a confusing "unbound variable"
+    # error that masks the real failure.
+    trap '[ -n "${workdir:-}" ] && rm -rf "$workdir"' EXIT
 
     STAGING_ROOT=""
     if [ -n "$TARBALL" ]; then
