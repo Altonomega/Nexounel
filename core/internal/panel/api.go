@@ -130,7 +130,7 @@ type apiResolver struct {
 }
 
 func apiResolverFrom(r ResolverHealth) apiResolver {
-	out := apiResolver{Available: r.Available, SourceFile: r.SourceFile, Note: r.Note, Total: len(r.Entries)}
+	out := apiResolver{Available: r.Available, SourceFile: r.SourceFile, Note: r.Note, Total: r.EntryTotal()}
 	out.Entries = make([]apiResolverEntry, 0, len(r.Entries))
 	for _, e := range r.Entries {
 		out.Entries = append(out.Entries, apiResolverEntry{

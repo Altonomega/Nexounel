@@ -141,3 +141,146 @@ func TestTailServiceLogsRedactsAndHandlesMissing(t *testing.T) {
 	}
 	_ = time.Now
 }
+
+// Scale-audit fix F2: resolver-fleet cap, totals, and file-identity cache.
+
+func writePanelNodeConfig(t *testing.T, dir, logDir string) string {
+	t.Helper()
+	configPath := filepath.Join(dir, "node.toml")
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "TCP"
+DOMAINS = ["a.example.com"]
+DATA_ENCRYPTION_METHOD = 5
+ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef"
+LOG_DIR = "`+logDir+`"
+MIN_UPLOAD_MTU = 40
+MAX_UPLOAD_MTU = 200
+MIN_DOWNLOAD_MTU = 100
+MAX_DOWNLOAD_MTU = 4000
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "client_resolvers.txt"), []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return configPath
+}
+
+func TestLoadNodeResolverHealthCapsEntriesKeepsTotals(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := writePanelNodeConfig(t, dir, logDir)
+
+	// 250 entries across two download-MTU tiers; the top tier must win
+	// the capped row list while the class totals cover all 250.
+	var sb strings.Builder
+	for i := 0; i < 250; i++ {
+		down := 1015
+		if i%2 == 0 {
+			down = 3475
+		}
+		fmt.Fprintf(&sb, "2026-01-01T00:%02d:00Z 192.0.2.%d:53 tunnel.example.com UP=110 DOWN=%d\n", i%60, (i%250)+1, down)
+	}
+	logPath := filepath.Join(logDir, "resolver_cache_20260101_000000.log")
+	if err := os.WriteFile(logPath, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := LoadNodeResolverHealth(configPath)
+	if !health.Available {
+		t.Fatalf("health unavailable: %q", health.Note)
+	}
+	if health.TotalEntries != 250 {
+		t.Fatalf("TotalEntries = %d, want 250", health.TotalEntries)
+	}
+	if health.EntryTotal() != 250 {
+		t.Fatalf("EntryTotal() = %d, want 250", health.EntryTotal())
+	}
+	if len(health.Entries) != MaxResolverHealthEntries {
+		t.Fatalf("len(Entries) = %d, want cap %d", len(health.Entries), MaxResolverHealthEntries)
+	}
+	for _, e := range health.Entries {
+		if e.DownloadMTU != 3475 {
+			t.Fatalf("capped rows must be the top tier by download MTU, got DOWN=%d", e.DownloadMTU)
+		}
+	}
+	classTotal := 0
+	for _, c := range health.Classes {
+		classTotal += c.Count
+	}
+	if classTotal != 250 {
+		t.Fatalf("class totals cover %d resolvers, want 250", classTotal)
+	}
+	if len(health.Classes) != 2 {
+		t.Fatalf("expected 2 MTU classes, got %d", len(health.Classes))
+	}
+}
+
+func TestLoadNodeResolverHealthCachesByFileIdentity(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := writePanelNodeConfig(t, dir, logDir)
+	logPath := filepath.Join(logDir, "resolver_cache_20260101_000000.log")
+
+	// Two contents of identical byte length: only the file identity
+	// (mtime/size) may distinguish them to the cache.
+	first := "2026-01-01T00:00:00Z 192.0.2.1:53 tunnel.example.com UP=110 DOWN=1015\n"
+	second := "2026-01-01T00:00:00Z 192.0.2.2:53 tunnel.example.com UP=110 DOWN=2015\n"
+	if len(first) != len(second) {
+		t.Fatalf("fixture lengths differ: %d vs %d", len(first), len(second))
+	}
+	if err := os.WriteFile(logPath, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	origInfo, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origMod := origInfo.ModTime()
+
+	health := LoadNodeResolverHealth(configPath)
+	if len(health.Entries) != 1 || health.Entries[0].IP != "192.0.2.1" {
+		t.Fatalf("first load unexpected: %+v", health.Entries)
+	}
+
+	// Rewrite with different content but restore the original mtime and
+	// keep the size: the cache must return the first content.
+	if err := os.WriteFile(logPath, []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(logPath, origMod, origMod); err != nil {
+		t.Fatal(err)
+	}
+	health = LoadNodeResolverHealth(configPath)
+	if len(health.Entries) != 1 || health.Entries[0].IP != "192.0.2.1" {
+		t.Fatalf("same-identity rewrite must hit the cache: %+v", health.Entries)
+	}
+
+	// Bump the mtime: the cache must re-parse and see the new content.
+	if err := os.Chtimes(logPath, origMod.Add(time.Hour), origMod.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	health = LoadNodeResolverHealth(configPath)
+	if len(health.Entries) != 1 || health.Entries[0].IP != "192.0.2.2" || health.Entries[0].DownloadMTU != 2015 {
+		t.Fatalf("mtime bump must invalidate the cache: %+v", health.Entries)
+	}
+}
+
+func TestResolverHealthEntryTotalFallback(t *testing.T) {
+	// Values built without TotalEntries (older callers, tests) keep
+	// reporting the row count.
+	h := ResolverHealth{Entries: []ResolverEntry{{}, {}}}
+	if h.EntryTotal() != 2 {
+		t.Fatalf("EntryTotal() = %d, want 2", h.EntryTotal())
+	}
+	h.TotalEntries = 250
+	if h.EntryTotal() != 250 {
+		t.Fatalf("EntryTotal() = %d, want 250", h.EntryTotal())
+	}
+}

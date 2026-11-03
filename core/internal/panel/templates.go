@@ -103,8 +103,9 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <table><tr><th>Node</th><th>Key fingerprint</th></tr>{{range .Content.Nodes}}<tr><td>{{.ID}}</td><td class="mono">{{.Fingerprint}}</td></tr>{{end}}</table>
 {{end}}</div>
 <div class="card"><h3>Resolver fleet</h3>
-{{if .Content.Resolver.Available}}<p>Source: <code>{{.Content.Resolver.SourceFile}}</code> &middot; {{len .Content.Resolver.Entries}} resolvers in {{len .Content.Resolver.Classes}} download-MTU classes</p>
+{{if .Content.Resolver.Available}}<p>Source: <code>{{.Content.Resolver.SourceFile}}</code> &middot; {{.Content.Resolver.EntryTotal}} resolvers in {{len .Content.Resolver.Classes}} download-MTU classes</p>
 {{if .Content.Resolver.Classes}}<table><tr><th>Download MTU class</th><th>Smallest upload MTU</th><th>Resolvers</th></tr>{{range .Content.Resolver.Classes}}<tr><td>{{.DownloadMTU}}</td><td>{{.UploadMTU}}</td><td>{{.Count}}</td></tr>{{end}}</table>{{end}}
+{{if gt .Content.Resolver.EntryTotal (len .Content.Resolver.Entries)}}<p class="muted">Showing the top {{len .Content.Resolver.Entries}} resolvers by download MTU.</p>{{end}}
 <table><tr><th>Resolver</th><th>Upload MTU</th><th>Download MTU</th><th>Last seen</th></tr>{{range .Content.Resolver.Entries}}<tr><td>{{.IP}}:{{.Port}}</td><td>{{.UploadMTU}}</td><td>{{.DownloadMTU}}</td><td>{{.LastSeen}}</td></tr>{{end}}</table>
 {{else}}<p>Resolver health: unavailable ({{.Content.Resolver.Note}})</p>{{end}}</div>
 <div class="card"><h3>Compression</h3>

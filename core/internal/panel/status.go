@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
@@ -186,16 +187,101 @@ type ResolverClass struct {
 type ResolverHealth struct {
 	Available  bool
 	SourceFile string
-	Entries    []ResolverEntry
-	Classes    []ResolverClass
-	Note       string
+	// Entries holds at most MaxResolverHealthEntries resolvers (top by
+	// download MTU); TotalEntries is the full fleet size in the source
+	// log. The per-class aggregation (Classes) always covers the whole
+	// fleet, so capping the row list loses no totals.
+	Entries      []ResolverEntry
+	TotalEntries int
+	Classes      []ResolverClass
+	Note         string
+}
+
+// EntryTotal reports how many resolvers the source log held in total. It
+// falls back to len(Entries) for values built without the cap (tests and
+// older callers), so uncapped health values keep reading correctly.
+func (r ResolverHealth) EntryTotal() int {
+	if r.TotalEntries > 0 {
+		return r.TotalEntries
+	}
+	return len(r.Entries)
+}
+
+// MaxResolverHealthEntries caps the resolver rows rendered on the
+// dashboard and returned by /api/status. The source log can hold tens of
+// thousands of entries; without the cap every dashboard load ships a
+// multi-MB payload. The cap keeps the top entries by download MTU (the
+// parse already sorts that way) and the totals stay exact via
+// TotalEntries and Classes.
+const MaxResolverHealthEntries = 100
+
+// resolverHealthCacheEntry is one cached LoadNodeResolverHealth result,
+// keyed on the identities of the two files it was parsed from. The panel
+// is a long-lived process and the dashboard reloads often; re-parsing a
+// tens-of-thousands-line log on every load is the cost this removes. A
+// cache hit requires the config file AND the newest log file to be
+// byte-identical in (path, mtime, size); any append to the live log
+// changes its mtime/size and re-parses. Same-mtime/same-size rewrites
+// are not detected (the standard make-style limitation).
+type resolverHealthCacheEntry struct {
+	configPath string
+	configMod  time.Time
+	configSize int64
+	logPath    string
+	logMod     time.Time
+	logSize    int64
+	health     ResolverHealth
+}
+
+var (
+	resolverHealthCacheMu  sync.Mutex
+	resolverHealthCache    resolverHealthCacheEntry
+	resolverHealthCacheSet bool
+)
+
+func cachedResolverHealth(configPath string, configInfo, logInfo os.FileInfo, logPath string) (ResolverHealth, bool) {
+	resolverHealthCacheMu.Lock()
+	defer resolverHealthCacheMu.Unlock()
+	if !resolverHealthCacheSet {
+		return ResolverHealth{}, false
+	}
+	cached := resolverHealthCache
+	if cached.configPath != configPath || cached.logPath != logPath ||
+		!cached.configMod.Equal(configInfo.ModTime()) || cached.configSize != configInfo.Size() ||
+		!cached.logMod.Equal(logInfo.ModTime()) || cached.logSize != logInfo.Size() {
+		return ResolverHealth{}, false
+	}
+	return cached.health, true
+}
+
+func storeResolverHealth(configPath string, configInfo, logInfo os.FileInfo, logPath string, health ResolverHealth) {
+	resolverHealthCacheMu.Lock()
+	defer resolverHealthCacheMu.Unlock()
+	resolverHealthCache = resolverHealthCacheEntry{
+		configPath: configPath,
+		configMod:  configInfo.ModTime(),
+		configSize: configInfo.Size(),
+		logPath:    logPath,
+		logMod:     logInfo.ModTime(),
+		logSize:    logInfo.Size(),
+		health:     health,
+	}
+	resolverHealthCacheSet = true
 }
 
 // LoadNodeResolverHealth reads the node client config (when present) and
 // parses the newest resolver_cache_*.log under its log directory. Every
-// failure mode reports unavailable rather than inventing numbers.
+// failure mode reports unavailable rather than inventing numbers. Parsed
+// results are cached on the identities of the config and log files (see
+// resolverHealthCacheEntry), and the returned row list is capped at
+// MaxResolverHealthEntries; totals and class aggregation cover the full
+// fleet.
 func LoadNodeResolverHealth(nodeConfigPath string) ResolverHealth {
 	cfg, err := config.LoadClientConfig(nodeConfigPath)
+	if err != nil {
+		return ResolverHealth{Note: "node config unavailable"}
+	}
+	configInfo, err := os.Stat(nodeConfigPath)
 	if err != nil {
 		return ResolverHealth{Note: "node config unavailable"}
 	}
@@ -206,24 +292,38 @@ func LoadNodeResolverHealth(nodeConfigPath string) ResolverHealth {
 		return ResolverHealth{Note: "no resolver cache log found"}
 	}
 	newest := ""
-	var newestMod time.Time
+	var newestInfo os.FileInfo
 	for _, file := range files {
 		info, err := os.Stat(file)
 		if err != nil {
 			continue
 		}
-		if newest == "" || info.ModTime().After(newestMod) {
-			newest, newestMod = file, info.ModTime()
+		if newest == "" || info.ModTime().After(newestInfo.ModTime()) {
+			newest, newestInfo = file, info
 		}
 	}
 	if newest == "" {
 		return ResolverHealth{Note: "no resolver cache log found"}
 	}
+	if cached, ok := cachedResolverHealth(nodeConfigPath, configInfo, newestInfo, newest); ok {
+		return cached
+	}
 	entries := ParseResolverCacheLog(newest)
 	if len(entries) == 0 {
 		return ResolverHealth{SourceFile: newest, Note: "resolver cache log has no usable entries"}
 	}
-	return ResolverHealth{Available: true, SourceFile: newest, Entries: entries, Classes: groupResolverClasses(entries)}
+	health := ResolverHealth{
+		Available:    true,
+		SourceFile:   newest,
+		TotalEntries: len(entries),
+		Classes:      groupResolverClasses(entries),
+	}
+	if len(entries) > MaxResolverHealthEntries {
+		entries = entries[:MaxResolverHealthEntries]
+	}
+	health.Entries = entries
+	storeResolverHealth(nodeConfigPath, configInfo, newestInfo, newest, health)
+	return health
 }
 
 // ParseResolverCacheLog parses one resolver cache log defensively. Lines
