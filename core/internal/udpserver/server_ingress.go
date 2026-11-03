@@ -56,6 +56,14 @@ func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacke
 	startIdx := int(s.preferredCodec.Load())
 	vpnPacket, codecIdx, err := VpnProto.ParseInflatedFromLabelsAnyMatching(decision.Labels, s.codecSnapshot(), startIdx, s.matchesInboundPacketCandidate)
 	if err != nil {
+		// Bootstrap fallback: when no node codec authenticates the
+		// frame, try the pending join-token keys. This runs only on
+		// frames the node trial already rejected, so normal traffic
+		// pays nothing for it. A match yields a bootstrap session,
+		// restricted to the enrollment target (see sessionRecord.Kind).
+		if bootstrapPacket, _, ok := s.tryBootstrapDecrypt(decision.Labels); ok {
+			return s.handleDecodedTunnelPacket(packet, parsed, decision, bootstrapPacket, tcp...)
+		}
 		if errors.Is(err, VpnProto.ErrInvalidFragmentInfo) {
 			s.fragmentInvalidHeader.Add(1)
 		}

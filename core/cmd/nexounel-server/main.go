@@ -20,6 +20,7 @@ import (
 	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
@@ -142,6 +143,18 @@ func main() {
 		}
 	}
 
+	// Enrollment issuer: the panel's loopback enrollment API. Empty
+	// means enrollment is unavailable (attempts fail transiently
+	// and nodes retry); a non-loopback URL is refused by the
+	// issuer client itself. Warn loudly when unset so the
+	// operator knows enrollment cannot succeed.
+	if strings.TrimSpace(cfg.EnrollmentIssuerURL) != "" {
+		srv.SetEnrollmentIssuer(enroll.HTTPIssuer{Endpoint: cfg.EnrollmentIssuerURL})
+		log.Infof("Enrollment issuer: <cyan>%s</cyan>", cfg.EnrollmentIssuerURL)
+	} else {
+		log.Warnf("ENROLLMENT_ISSUER_URL is not set: bootstrap enrollment is unavailable (nodes will retry transiently)")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -176,6 +189,12 @@ func main() {
 			log.Errorf("Control socket handler setup failed: %v", handlerErr)
 			os.Exit(1)
 		}
+		// Bootstrap keys: the panel pushes pending join-token keys
+		// here at issuance and removes them at consume/revoke, so
+		// bootstrap sessions can authenticate without a registry
+		// entry. The handler rejects the commands when no store
+		// is attached; the server always supports them.
+		handler.SetBootstrapStore(srv)
 		controlListener, listenErr := control.Listen(cfg.ControlSocketPath)
 		if listenErr != nil {
 			log.Errorf("Control socket setup failed: %v", listenErr)

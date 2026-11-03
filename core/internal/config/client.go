@@ -177,6 +177,13 @@ type ClientConfig struct {
 	// decrypts them, looked up in its node registry.
 	NodeID      string `toml:"NODE_ID"`
 	NodeKeyFile string `toml:"NODE_KEY_FILE"`
+	// MeshControlSecretFile is where enrollment stores the mesh
+	// control secret (§8.3): the HMAC key for peer control
+	// traffic. Empty = a sibling of NODE_KEY_FILE
+	// (mesh-control-secret.key). The file is written 0600 by
+	// enroll mode and read by the peer control port; it is never
+	// used for data-plane sessions.
+	MeshControlSecretFile string `toml:"MESH_CONTROL_SECRET_FILE"`
 	// CapacityMargin is the multisession safety factor applied to
 	// measured capacity (0, 1]; default 0.95.
 	CapacityMargin float64 `toml:"CAPACITY_MARGIN"`

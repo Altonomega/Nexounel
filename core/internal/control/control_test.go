@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -55,6 +56,44 @@ type fakeSwapError string
 func (e fakeSwapError) Error() string { return string(e) }
 
 const errFakeSwap = fakeSwapError("fake swap failure")
+
+// fakeBootstrapStore is an in-memory BootstrapKeyStore for the
+// bootstrap-key command tests.
+type fakeBootstrapStore struct {
+	mu      sync.Mutex
+	keys    map[string][]byte
+	expires map[string]time.Time
+}
+
+func newFakeBootstrapStore() *fakeBootstrapStore {
+	return &fakeBootstrapStore{keys: make(map[string][]byte), expires: make(map[string]time.Time)}
+}
+
+func (f *fakeBootstrapStore) AddBootstrapKey(fingerprint string, key []byte, expiresAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(key) != 32 || !expiresAt.After(time.Now()) {
+		return errors.New("fake bootstrap store: invalid key or expiry")
+	}
+	f.keys[fingerprint] = append([]byte(nil), key...)
+	f.expires[fingerprint] = expiresAt
+	return nil
+}
+
+func (f *fakeBootstrapStore) RemoveBootstrapKey(fingerprint string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.keys, fingerprint)
+	delete(f.expires, fingerprint)
+	return nil
+}
+
+func (f *fakeBootstrapStore) has(fingerprint string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.keys[fingerprint]
+	return ok
+}
 
 const (
 	testKeyA = "00112233445566778899aabbccddeeff"
@@ -425,5 +464,92 @@ func TestListenRemovesStaleSocket(t *testing.T) {
 	client := Client{SocketPath: filepath.Join(t.TempDir(), "missing.sock")}
 	if err := client.ReloadRegistry(context.Background()); err == nil {
 		t.Error("dialing a missing socket must fail")
+	}
+}
+
+const testFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const testBootstrapKeyHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+
+func TestBootstrapKeyCommands(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "nodes.toml")
+	writeTestRegistry(t, regPath, registryContent("id = \"node-a\"\nkey = \""+testKeyA+"\""))
+	swapper := &fakeSwapper{}
+	h, err := NewRegistryHandler(regPath, 5, swapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// Without a store, both commands are refused, never silently dropped.
+	add := Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+		"fingerprint": testFingerprint, "key": testBootstrapKeyHex,
+		"expires_unix": "4102444800",
+	}}
+	if resp := h.Handle(ctx, add); resp.OK {
+		t.Fatal("add-bootstrap-key without a store must be refused")
+	}
+	if resp := h.Handle(ctx, Request{Version: ProtocolVersion, Command: CmdRemoveBootstrapKey,
+		Args: map[string]string{"fingerprint": testFingerprint}}); resp.OK {
+		t.Fatal("remove-bootstrap-key without a store must be refused")
+	}
+
+	store := newFakeBootstrapStore()
+	h.SetBootstrapStore(store)
+	if resp := h.Handle(ctx, add); !resp.OK {
+		t.Fatalf("add-bootstrap-key: %s", resp.Error)
+	}
+	if !store.has(testFingerprint) {
+		t.Fatal("key was not installed in the store")
+	}
+	// Re-adding the same fingerprint replaces the key (re-issue).
+	if resp := h.Handle(ctx, add); !resp.OK {
+		t.Fatalf("re-adding a fingerprint: %s", resp.Error)
+	}
+	if resp := h.Handle(ctx, Request{Version: ProtocolVersion, Command: CmdRemoveBootstrapKey,
+		Args: map[string]string{"fingerprint": testFingerprint}}); !resp.OK {
+		t.Fatalf("remove-bootstrap-key: %s", resp.Error)
+	}
+	if store.has(testFingerprint) {
+		t.Fatal("key was not removed from the store")
+	}
+	// Removing an unknown fingerprint succeeds (idempotent).
+	if resp := h.Handle(ctx, Request{Version: ProtocolVersion, Command: CmdRemoveBootstrapKey,
+		Args: map[string]string{"fingerprint": testFingerprint}}); !resp.OK {
+		t.Fatalf("removing an unknown fingerprint: %s", resp.Error)
+	}
+}
+
+func TestBootstrapKeyCommandsRejectBadInput(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "nodes.toml")
+	writeTestRegistry(t, regPath, registryContent("id = \"node-a\"\nkey = \""+testKeyA+"\""))
+	h, _ := NewRegistryHandler(regPath, 5, &fakeSwapper{})
+	h.SetBootstrapStore(newFakeBootstrapStore())
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		req  Request
+	}{
+		{"short fingerprint", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": "abc", "key": testBootstrapKeyHex, "expires_unix": "4102444800"}}},
+		{"uppercase fingerprint", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": strings.ToUpper(testFingerprint), "key": testBootstrapKeyHex, "expires_unix": "4102444800"}}},
+		{"short key", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": testFingerprint, "key": "00112233", "expires_unix": "4102444800"}}},
+		{"non-hex key", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": testFingerprint, "key": strings.Repeat("zz", 32), "expires_unix": "4102444800"}}},
+		{"past expiry", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": testFingerprint, "key": testBootstrapKeyHex, "expires_unix": "1000000000"}}},
+		{"bad expiry", Request{Version: ProtocolVersion, Command: CmdAddBootstrapKey, Args: map[string]string{
+			"fingerprint": testFingerprint, "key": testBootstrapKeyHex, "expires_unix": "soon"}}},
+		{"remove bad fingerprint", Request{Version: ProtocolVersion, Command: CmdRemoveBootstrapKey,
+			Args: map[string]string{"fingerprint": "not-a-fingerprint"}}},
+	}
+	for _, tc := range cases {
+		if resp := h.Handle(ctx, tc.req); resp.OK {
+			t.Errorf("%s: must be refused", tc.name)
+		}
 	}
 }

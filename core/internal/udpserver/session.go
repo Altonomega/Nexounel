@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
@@ -47,7 +48,16 @@ type sessionRecord struct {
 	// NodeID is the registry ID of the node whose key opened this
 	// session ("" in single shared-key mode).
 	NodeID string
-	mu     sync.RWMutex
+	// Kind distinguishes normal keyed sessions from bootstrap
+	// (enrollment) sessions. A bootstrap session authenticated
+	// under a pending join-token key is restricted at the session
+	// layer to the enrollment target only (see enroll.AllowedTarget).
+	Kind enroll.SessionKind
+	// BootstrapFingerprint is the token fingerprint whose derived
+	// key authenticated a bootstrap session ("" for normal
+	// sessions). It names the pending join, never the token.
+	BootstrapFingerprint string
+	mu                   sync.RWMutex
 
 	ID uint16
 	// LegacySessionID records that this session was opened by a client of the

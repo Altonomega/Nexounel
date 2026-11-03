@@ -92,7 +92,18 @@ func (s *Server) prepareIngressPacket(packet []byte) (preparedIngress, bool) {
 		// answerable rather than being rejected merely by the optimization.
 		vpnPacket, codecIdx, err = VpnProto.ParseFromLabelsAny(decision.Labels, codecs, startIdx)
 	}
-	if err == nil && codecIdx != startIdx {
+	if err != nil {
+		// Bootstrap fallback: when no node codec authenticates the
+		// frame (strict or broad), try the pending join-token keys
+		// the same way. The worker applies strict semantics
+		// downstream; admission only decides queue space.
+		if bootstrapPacket, _, ok := s.tryBootstrapTrial(decision.Labels, false, true); ok {
+			vpnPacket, codecIdx, err = bootstrapPacket, -1, nil
+		} else if bootstrapPacket, _, ok := s.tryBootstrapTrial(decision.Labels, false, false); ok {
+			vpnPacket, codecIdx, err = bootstrapPacket, -1, nil
+		}
+	}
+	if err == nil && codecIdx >= 0 && codecIdx != startIdx {
 		s.preferredCodec.Store(int32(codecIdx))
 	}
 	if err != nil {

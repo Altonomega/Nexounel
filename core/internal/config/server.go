@@ -234,6 +234,13 @@ type ServerConfig struct {
 	// without restarting the server. Empty (default) = disabled:
 	// registry changes then require the Phase 2 restart flow.
 	ControlSocketPath string `toml:"CONTROL_SOCKET_PATH"`
+	// EnrollmentIssuerURL is the panel's loopback enrollment API
+	// (§3.4): the enrollment handler relays bootstrap enrollment
+	// requests to it. Loopback URLs only (127.0.0.0/8, ::1,
+	// localhost); anything else is refused. Empty (default) =
+	// enrollment unavailable: attempts fail transiently and the
+	// node retries, per the panel-down case in §3.5.
+	EnrollmentIssuerURL string `toml:"ENROLLMENT_ISSUER_URL"`
 	// ForwardPortRange ("lo-hi") is the allowlist of target ports a
 	// client may request in a TCP-forward STREAM_SYN payload. Empty =
 	// legacy behavior: every stream goes to FORWARD_IP:FORWARD_PORT.

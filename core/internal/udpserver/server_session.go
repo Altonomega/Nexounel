@@ -19,6 +19,7 @@ import (
 	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
 	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
 	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/fec"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
@@ -941,6 +942,16 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
 	record.streamCleanup = s.cleanupStreamArtifacts
 	if nodeID := s.nodeIDForCodec(record.Codec); nodeID != "" {
 		record.NodeID = nodeID
+	}
+	// Bootstrap sessions authenticate under a pending join-token
+	// key, not a registry key: mark the kind and the fingerprint
+	// so the stream layer can restrict the session to the
+	// enrollment target. Reused records keep the kind they were
+	// created with (the reuse check already requires the same
+	// codec), so marking unconditionally is idempotent.
+	if fp, ok := s.bootstrapFingerprintForCodec(record.Codec); ok {
+		record.Kind = enroll.SessionKindBootstrap
+		record.BootstrapFingerprint = fp
 	}
 
 	if !reused && s.log != nil {

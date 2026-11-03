@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
 	SocksProto "github.com/MNSH-Nexo/Nexounel/core/internal/socksproto"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/udpframe"
@@ -146,6 +147,14 @@ func (s *Server) processDeferredStreamSyn(ctx context.Context, vpnPacket VpnProt
 
 	record, ok := s.sessions.Get(vpnPacket.SessionID)
 	if !ok {
+		return
+	}
+
+	// Reserved targets are intercepted before the forward path:
+	// enrollment and control streams are addressed, not dialed,
+	// and must not depend on forward configuration.
+	if target, ok := enroll.ParseTarget(vpnPacket.Payload); ok {
+		s.processReservedStreamSyn(ctx, vpnPacket, target)
 		return
 	}
 

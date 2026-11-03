@@ -23,6 +23,7 @@ import (
 	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
 	dnsCache "github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
 	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/netutil"
@@ -69,9 +70,20 @@ type Server struct {
 	// without stopping the server: readers load one consistent
 	// snapshot per packet, and sessions already established keep
 	// the codec they were created with.
-	installed                atomic.Pointer[codecSet]
-	preferredCodec           atomic.Int32       // index into codecs to try first
-	codecAccepted            [6]atomic.Uint64   // successful ingress frames by encryption method
+	installed      atomic.Pointer[codecSet]
+	preferredCodec atomic.Int32     // index into codecs to try first
+	codecAccepted  [6]atomic.Uint64 // successful ingress frames by encryption method
+	// bootstrap holds pending join-token keys for bootstrap
+	// sessions (enrollment). It is separate from installed: those
+	// keys never authenticate a normal session and expire with
+	// the token. See bootstrap.go.
+	bootstrap bootstrapState
+	// enrollmentIssuer is the panel loopback issuer the enrollment
+	// handler relays through (nil = enrollment unavailable).
+	// enrollLimiter bounds global enrollment attempts.
+	enrollmentIssuerMu       sync.RWMutex
+	enrollmentIssuer         enroll.Issuer
+	enrollLimiter            enrollmentRateLimiter
 	ingressReplay            ingressReplayCache // authenticated requests already dispatched
 	domainMatcher            *domainMatcher.Matcher
 	advertisedDomains        []string // ADVERTISE_DOMAINS ∩ DOMAIN, see domain_rotation.go
@@ -562,6 +574,13 @@ func (s *Server) SessionSummaries() []control.SessionSummary {
 	out := make([]control.SessionSummary, 0, len(records))
 	for _, r := range records {
 		if r == nil {
+			continue
+		}
+		// Bootstrap (enrollment) sessions are not mesh members:
+		// they carry no node identity and must not appear in the
+		// panel's mesh view. They are visible in the server log
+		// at creation; list-sessions reports members only.
+		if r.Kind == enroll.SessionKindBootstrap {
 			continue
 		}
 		last := r.CreatedAt

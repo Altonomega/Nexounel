@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -162,6 +162,17 @@ func (c *Client) appendResolverCacheEntry(conn *Connection) {
 	if c.resolverCacheLogFile != nil {
 		_, _ = c.resolverCacheLogFile.WriteString(line)
 	}
+}
+
+// Close releases resources held by a client that never entered
+// Run: today, the resolver cache log file. It is safe to call
+// more than once and on a client whose Run loop owns the log
+// (the log close is mutex-guarded and idempotent). Long-running
+// Run clients should not call Close while serving; enroll-mode
+// attempts, which never call Run, close after every attempt so a
+// retry loop cannot leak a file descriptor per attempt.
+func (c *Client) Close() {
+	c.closeResolverCacheLog()
 }
 
 // closeResolverCacheLog flushes and closes the cache log file.

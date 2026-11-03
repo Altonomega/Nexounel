@@ -29,11 +29,13 @@ package control
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,13 @@ const (
 	CmdRotateKey = "rotate-key"
 	// CmdListSessions returns per-node session summaries.
 	CmdListSessions = "list-sessions"
+	// CmdAddBootstrapKey installs a pending bootstrap key (derived
+	// from a join token) so the server can trial-decrypt bootstrap
+	// sessions. The key is single-purpose and expires with the token.
+	CmdAddBootstrapKey = "add-bootstrap-key"
+	// CmdRemoveBootstrapKey drops a pending bootstrap key (token
+	// consumed, revoked, or expired).
+	CmdRemoveBootstrapKey = "remove-bootstrap-key"
 )
 
 // Request is one control-socket request. Args carries command
@@ -114,6 +123,24 @@ type CodecSwapper interface {
 	SessionSummaries() []SessionSummary
 }
 
+// BootstrapKeyStore is the server side of pending bootstrap keys:
+// derived join-token keys the server trial-decrypts bootstrap
+// sessions against. It is separate from CodecSwapper because
+// bootstrap keys are not node codecs: they never authenticate a
+// normal session, never appear in the registry, and expire with
+// the token. The store holds derived key bytes only, never the
+// raw token.
+type BootstrapKeyStore interface {
+	// AddBootstrapKey installs key for fingerprint until expiresAt.
+	// It must reject malformed fingerprints, wrong-size keys, and
+	// non-future expiries without touching the current set.
+	AddBootstrapKey(fingerprint string, key []byte, expiresAt time.Time) error
+	// RemoveBootstrapKey drops the key for fingerprint. Removing
+	// an unknown fingerprint is a no-op success (idempotent, so
+	// consume and revoke paths cannot disagree).
+	RemoveBootstrapKey(fingerprint string) error
+}
+
 // Handler dispatches control requests. It is implemented by
 // RegistryHandler (below) and is an interface so the socket server
 // stays testable with a fake.
@@ -133,6 +160,10 @@ type RegistryHandler struct {
 	swapper      CodecSwapper
 	nodes        []multisession.Node // last-known in-memory list
 	loaded       bool
+	// bootstrapStore, when set, serves the bootstrap-key commands.
+	// It is optional: servers without bootstrap support reject
+	// those commands rather than silently dropping the keys.
+	bootstrapStore BootstrapKeyStore
 }
 
 // NewRegistryHandler builds a handler. registryPath must be the
@@ -150,6 +181,30 @@ func NewRegistryHandler(registryPath string, method int, swapper CodecSwapper) (
 		return nil, errors.New("control handler requires a codec swapper")
 	}
 	return &RegistryHandler{registryPath: registryPath, method: method, swapper: swapper}, nil
+}
+
+// SetBootstrapStore attaches the pending-bootstrap-key store served
+// by the bootstrap-key commands. A nil store disables those
+// commands. It must be called before Serve starts; it is not safe
+// for concurrent use with Handle.
+func (h *RegistryHandler) SetBootstrapStore(store BootstrapKeyStore) {
+	h.bootstrapStore = store
+}
+
+// validBootstrapFingerprint reports whether fp is a token
+// fingerprint: 64 lowercase hex chars (SHA-256 hex). Anything else
+// is rejected before it reaches the store, so a malformed command
+// can never install or drop a key it did not name exactly.
+func validBootstrapFingerprint(fp string) bool {
+	if len(fp) != 64 {
+		return false
+	}
+	for _, r := range fp {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // loadLocked re-reads the registry file into memory. Callers hold mu.
@@ -311,6 +366,40 @@ func (h *RegistryHandler) Handle(ctx context.Context, req Request) Response {
 			})
 		}
 		return Response{Version: ProtocolVersion, OK: true, Data: map[string]any{"sessions": sessions}}
+	case CmdAddBootstrapKey:
+		fp := strings.TrimSpace(req.Args["fingerprint"])
+		keyHex := strings.TrimSpace(req.Args["key"])
+		expiresRaw := strings.TrimSpace(req.Args["expires_unix"])
+		if !validBootstrapFingerprint(fp) || keyHex == "" || expiresRaw == "" {
+			return Response{Version: ProtocolVersion, Error: "add-bootstrap-key requires fingerprint, key, and expires_unix"}
+		}
+		key, err := hex.DecodeString(keyHex)
+		if err != nil || len(key) != 32 {
+			return Response{Version: ProtocolVersion, Error: "add-bootstrap-key requires a 32-byte hex key"}
+		}
+		expiresUnix, err := strconv.ParseInt(expiresRaw, 10, 64)
+		if err != nil || expiresUnix <= time.Now().Unix() {
+			return Response{Version: ProtocolVersion, Error: "add-bootstrap-key requires a future expires_unix"}
+		}
+		if h.bootstrapStore == nil {
+			return Response{Version: ProtocolVersion, Error: "bootstrap keys are not supported by this server"}
+		}
+		if err := h.bootstrapStore.AddBootstrapKey(fp, key, time.Unix(expiresUnix, 0)); err != nil {
+			return Response{Version: ProtocolVersion, Error: err.Error()}
+		}
+		return Response{Version: ProtocolVersion, OK: true}
+	case CmdRemoveBootstrapKey:
+		fp := strings.TrimSpace(req.Args["fingerprint"])
+		if !validBootstrapFingerprint(fp) {
+			return Response{Version: ProtocolVersion, Error: "remove-bootstrap-key requires fingerprint"}
+		}
+		if h.bootstrapStore == nil {
+			return Response{Version: ProtocolVersion, Error: "bootstrap keys are not supported by this server"}
+		}
+		if err := h.bootstrapStore.RemoveBootstrapKey(fp); err != nil {
+			return Response{Version: ProtocolVersion, Error: err.Error()}
+		}
+		return Response{Version: ProtocolVersion, OK: true}
 	default:
 		return Response{Version: ProtocolVersion, Error: fmt.Sprintf("unknown control command %q", req.Command)}
 	}
@@ -504,4 +593,26 @@ func (c Client) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 		return nil, fmt.Errorf("decode session summaries: %w", err)
 	}
 	return sessions, nil
+}
+
+// AddBootstrapKey installs a pending bootstrap key on the server.
+// keyHex is the lowercase hex of the 32-byte derived key (the form
+// BootstrapKeyString produces); expiresAt is the token expiry. The
+// key is useless after the token burns or expires, and the panel
+// removes it with RemoveBootstrapKey when the token is consumed,
+// revoked, or swept.
+func (c Client) AddBootstrapKey(ctx context.Context, fingerprint, keyHex string, expiresAt time.Time) error {
+	_, err := c.Call(ctx, Request{Command: CmdAddBootstrapKey, Args: map[string]string{
+		"fingerprint":  fingerprint,
+		"key":          keyHex,
+		"expires_unix": strconv.FormatInt(expiresAt.Unix(), 10),
+	}})
+	return err
+}
+
+// RemoveBootstrapKey drops a pending bootstrap key from the server.
+// Removing an unknown fingerprint succeeds (idempotent).
+func (c Client) RemoveBootstrapKey(ctx context.Context, fingerprint string) error {
+	_, err := c.Call(ctx, Request{Command: CmdRemoveBootstrapKey, Args: map[string]string{"fingerprint": fingerprint}})
+	return err
 }

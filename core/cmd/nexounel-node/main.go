@@ -16,8 +16,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -41,6 +43,9 @@ func main() {
 	resolversPath := flag.String("resolvers", "", "Path to resolver file override (optional)")
 	scanOnly := flag.Bool("scan-only", false, "Scan resolvers, emit WD_SCAN results, and exit without starting the tunnel")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
+	enrollFlag := flag.Bool("enroll", false, "Enroll this node with a join token (outbound-only manual join, §3.3) instead of starting the tunnel")
+	joinTokenFlag := flag.String("join-token", "", "Join token for --enroll (handled as a secret: never logged)")
+	joinTokenFileFlag := flag.String("join-token-file", "", "File containing the join token for --enroll (preferred over --join-token)")
 	configFlags, err := config.NewClientConfigFlagBinder(flag.CommandLine)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Node flag setup failed: %v\n", err)
@@ -81,6 +86,38 @@ func main() {
 	}
 	if strings.TrimSpace(cfg.NodeKeyFile) == "" {
 		fmt.Fprintln(os.Stderr, "Node startup failed: NODE_KEY_FILE is required (per-node key file)")
+		os.Exit(1)
+	}
+
+	if *enrollFlag {
+		var stdin io.Reader
+		if strings.TrimSpace(*joinTokenFlag) == "" && strings.TrimSpace(*joinTokenFileFlag) == "" {
+			// Stdin is the last token source. Refuse to block on a
+			// terminal: the operator must pipe the token or use a
+			// flag/file.
+			if st, err := os.Stdin.Stat(); err == nil && st.Mode()&os.ModeCharDevice == 0 {
+				stdin = os.Stdin
+			} else {
+				fmt.Fprintln(os.Stderr, "Enroll mode failed: a join token is required via --join-token, --join-token-file, or stdin")
+				os.Exit(1)
+			}
+		}
+		token, err := loadJoinToken(*joinTokenFlag, *joinTokenFileFlag, stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Enroll mode failed: %v\n", err)
+			os.Exit(1)
+		}
+		sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		err = runEnrollMode(sigCtx, resolvedConfigPath, overrides, cfg, token)
+		if errors.Is(err, errEnrolled) {
+			fmt.Fprintln(os.Stderr, "Enrollment complete: restarting as a normal node")
+			if rerr := restartAsNormalNode(resolvedConfigPath, *resolversPath); rerr != nil {
+				fmt.Fprintf(os.Stderr, "Restart after enrollment failed (%v): start the node normally to pick up the issued config\n", rerr)
+			}
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Enroll mode failed: %v\n", err)
 		os.Exit(1)
 	}
 
