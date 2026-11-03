@@ -218,6 +218,12 @@ type ServerConfig struct {
 	// codec per registry entry and attributes sessions by the key that
 	// decrypts them. Unset = single shared key via ENCRYPTION_KEY_FILE.
 	NodeRegistryFile string `toml:"NODE_REGISTRY_FILE"`
+	// ControlSocketPath enables the registry control socket (§4.1): a
+	// root-only Unix socket through which the panel reloads the
+	// registry, adds/removes/rotates nodes, and lists sessions
+	// without restarting the server. Empty (default) = disabled:
+	// registry changes then require the Phase 2 restart flow.
+	ControlSocketPath string `toml:"CONTROL_SOCKET_PATH"`
 	// ForwardPortRange ("lo-hi") is the allowlist of target ports a
 	// client may request in a TCP-forward STREAM_SYN payload. Empty =
 	// legacy behavior: every stream goes to FORWARD_IP:FORWARD_PORT.

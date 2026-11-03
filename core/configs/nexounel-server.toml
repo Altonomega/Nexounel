@@ -39,6 +39,13 @@ DATA_ENCRYPTION_METHOD = 5
 # Relative paths resolve against the config file's directory.
 NODE_REGISTRY_FILE = "nodes.toml"
 
+# Registry control socket (Phase 3, §4.1): a root-only Unix socket
+# through which the panel reloads the registry and rotates keys
+# without restarting the server. Empty = disabled (registry changes
+# require a restart). The path must be writable by the server user;
+# the socket itself is created mode 0600.
+CONTROL_SOCKET_PATH = ""
+
 # Single shared-key mode fallback (used only when NODE_REGISTRY_FILE
 # is empty): the key file the server generates/loads.
 ENCRYPTION_KEY_FILE = "encrypt_key.txt"

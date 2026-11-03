@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
@@ -145,6 +146,37 @@ func main() {
 		go func() {
 			if serveErr := srv.ServeMetrics(ctx, listener); serveErr != nil && ctx.Err() == nil {
 				log.Errorf("Metrics listener stopped unexpectedly: %v", serveErr)
+				stop()
+			}
+		}()
+	}
+
+	// Registry control socket (§4.1): the panel's no-restart path
+	// for registry reloads, node add/remove, key rotation, and
+	// session listing. It only exists in node-registry mode: with
+	// a single shared key there is no registry to reload, and
+	// starting a socket that cannot serve would mislead the
+	// operator into thinking reloads work.
+	if cfg.ControlSocketPath != "" {
+		if registry == nil {
+			log.Errorf("CONTROL_SOCKET_PATH is set but no NODE_REGISTRY_FILE is configured: the control socket requires node-registry mode")
+			os.Exit(1)
+		}
+		handler, handlerErr := control.NewRegistryHandler(cfg.NodeRegistryFile, cfg.DataEncryptionMethod, srv)
+		if handlerErr != nil {
+			log.Errorf("Control socket handler setup failed: %v", handlerErr)
+			os.Exit(1)
+		}
+		controlListener, listenErr := control.Listen(cfg.ControlSocketPath)
+		if listenErr != nil {
+			log.Errorf("Control socket setup failed: %v", listenErr)
+			os.Exit(1)
+		}
+		defer os.Remove(cfg.ControlSocketPath)
+		log.Infof("Registry control socket ready: <cyan>%s</cyan>", cfg.ControlSocketPath)
+		go func() {
+			if serveErr := control.Serve(ctx, controlListener, handler); serveErr != nil && ctx.Err() == nil {
+				log.Errorf("Control socket stopped unexpectedly: %v", serveErr)
 				stop()
 			}
 		}()
