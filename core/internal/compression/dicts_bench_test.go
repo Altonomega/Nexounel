@@ -12,7 +12,11 @@ package compression
 // the CompressPayload entropy/min-size gates, so the incompressible
 // corpora measure codec behavior rather than the gate short-circuit.
 // Ratio is reported as compressed/original; ns/op, B/op and
-// allocs/op come from the testing framework.
+// allocs/op come from the testing framework. Level 0 is included
+// in the matrix and small-frame benchmarks: with Dict=true it
+// resolves to DefaultDictLevel (9) in Configure, so the
+// Level0/Dict=true rows ARE the production default; with
+// Dict=false Level 0 is the legacy SpeedFastest encoder.
 
 import (
 	"fmt"
@@ -131,7 +135,7 @@ func BenchmarkZSTDMatrix(b *testing.B) {
 		{"Random", randData},
 	}
 	for _, corpus := range corpora {
-		for _, level := range []int{1, 3, 9, 19} {
+		for _, level := range []int{0, 1, 3, 9, 19} {
 			for _, dict := range []bool{false, true} {
 				for _, long := range []bool{false, true} {
 					name := fmt.Sprintf("%s/Level%d/Dict=%v/Long=%v", corpus.name, level, dict, long)
@@ -149,7 +153,7 @@ func BenchmarkSmallFrame(b *testing.B) {
 	if len(frame) != 696 {
 		b.Fatalf("frame size %d, want 696", len(frame))
 	}
-	for _, level := range []int{1, 9} {
+	for _, level := range []int{0, 1, 9} {
 		for _, dict := range []bool{false, true} {
 			for _, long := range []bool{false, true} {
 				name := fmt.Sprintf("Frame696/Level%d/Dict=%v/Long=%v", level, dict, long)
@@ -203,9 +207,15 @@ func BenchmarkPeakHeap(b *testing.B) {
 	plain, _, _ := benchCorpora()
 	for _, cfg := range []ZSTDOptions{
 		{},
+		{DictEnabled: true},
 		{DictEnabled: true, Level: 19, LongEnabled: true},
 	} {
-		name := fmt.Sprintf("Level%d/Dict=%v/Long=%v", cfg.Level, cfg.DictEnabled, cfg.LongEnabled)
+		// Label the dict-default config by its effective level.
+		displayLevel := cfg.Level
+		if cfg.DictEnabled && displayLevel == 0 {
+			displayLevel = DefaultDictLevel
+		}
+		name := fmt.Sprintf("Level%d/Dict=%v/Long=%v", displayLevel, cfg.DictEnabled, cfg.LongEnabled)
 		b.Run(name, func(b *testing.B) {
 			Configure(cfg)
 			b.Cleanup(func() { Configure(ZSTDOptions{}) })

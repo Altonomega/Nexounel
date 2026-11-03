@@ -3,6 +3,7 @@ package compression
 import (
 	"bytes"
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 
@@ -67,6 +68,37 @@ func TestCompressPayloadGoldenByteIdentity(t *testing.T) {
 }
 
 func TestEmbeddedDictionaries(t *testing.T) {
+	if DictionaryVersion != "v1" {
+		t.Fatalf("DictionaryVersion=%q want %q", DictionaryVersion, "v1")
+	}
+	if UploadDictionaryID == 0 || DownloadDictionaryID == 0 {
+		t.Fatal("dictionary IDs must be non-zero")
+	}
+	if UploadDictionaryID != 1 || DownloadDictionaryID != 2 {
+		t.Fatalf("dictionary IDs upload=%d download=%d want 1 and 2", UploadDictionaryID, DownloadDictionaryID)
+	}
+	if UploadDictionaryID == DownloadDictionaryID {
+		t.Fatal("dictionary IDs must be distinct so the decoder can select by ID")
+	}
+	// The versioned file names must match DictionaryVersion and
+	// the files on disk must be byte-identical to the embedded
+	// bytes: both ends ship the same files, and a retrain must
+	// rename them (see the versioning rules in dicts/README.md).
+	for _, tc := range []struct {
+		name     string
+		embedded []byte
+	}{
+		{"upload-" + DictionaryVersion + ".dict", uploadDictionary},
+		{"download-" + DictionaryVersion + ".dict", downloadDictionary},
+	} {
+		onDisk, err := os.ReadFile("dicts/" + tc.name)
+		if err != nil {
+			t.Fatalf("versioned dictionary file dicts/%s: %v", tc.name, err)
+		}
+		if !bytes.Equal(onDisk, tc.embedded) {
+			t.Fatalf("dicts/%s on disk differs from the embedded dictionary", tc.name)
+		}
+	}
 	if len(uploadDictionary) == 0 || len(downloadDictionary) == 0 {
 		t.Fatal("embedded dictionaries must not be empty")
 	}
@@ -115,6 +147,73 @@ func TestConfigureClampsLevel(t *testing.T) {
 	got := currentZSTDOptions()
 	if !got.DictEnabled || got.Level != 9 || !got.LongEnabled {
 		t.Fatalf("options not stored: %+v", got)
+	}
+}
+
+func TestDictDefaultLevelIsNine(t *testing.T) {
+	defer Configure(ZSTDOptions{})
+
+	// DictEnabled with no explicit level resolves to the measured
+	// knee (9). The long window is NOT implied: it stays off.
+	Configure(ZSTDOptions{DictEnabled: true})
+	got := currentZSTDOptions()
+	if got.Level != DefaultDictLevel || DefaultDictLevel != 9 {
+		t.Fatalf("dict default level=%d want 9", got.Level)
+	}
+	if !got.DictEnabled || got.LongEnabled {
+		t.Fatalf("dict default options wrong: %+v", got)
+	}
+
+	// Explicit levels always win, at both ends of the range.
+	for _, level := range []int{1, 3, 9, 19, 22} {
+		Configure(ZSTDOptions{DictEnabled: true, Level: level})
+		if got := currentZSTDOptions().Level; got != level {
+			t.Fatalf("dict+level %d stored as %d", level, got)
+		}
+	}
+	Configure(ZSTDOptions{DictEnabled: true, Level: 99})
+	if got := currentZSTDOptions().Level; got != 22 {
+		t.Fatalf("dict+level 99 clamped to %d, want 22", got)
+	}
+
+	// With dictionaries OFF, Level 0 is untouched: the legacy
+	// SpeedFastest encoder, byte-for-byte (see the golden test).
+	Configure(ZSTDOptions{})
+	if got := currentZSTDOptions().Level; got != 0 {
+		t.Fatalf("dict-off level=%d want 0 (legacy SpeedFastest)", got)
+	}
+
+	// The resolved default must encode byte-identically to an
+	// explicit level 9, through both the direction-blind seam and
+	// the direct codec path, and must decode under the dict
+	// config. (If the two ever diverged, the "default == 9"
+	// claim in the docs would be false.)
+	httpish, _, _, _ := goldenInputs()
+	Configure(ZSTDOptions{DictEnabled: true})
+	defFrame, used := CompressPayload(httpish, TypeZSTD, DefaultMinSize)
+	if used != TypeZSTD {
+		t.Fatal("dict-default encode did not use ZSTD")
+	}
+	defDirect, err := compressZSTD(httpish)
+	if err != nil {
+		t.Fatalf("dict-default direct encode: %v", err)
+	}
+	Configure(ZSTDOptions{DictEnabled: true, Level: 9})
+	expFrame, used := CompressPayload(httpish, TypeZSTD, DefaultMinSize)
+	if used != TypeZSTD {
+		t.Fatal("dict+level9 encode did not use ZSTD")
+	}
+	expDirect, err := compressZSTD(httpish)
+	if err != nil {
+		t.Fatalf("dict+level9 direct encode: %v", err)
+	}
+	if !bytes.Equal(defFrame, expFrame) || !bytes.Equal(defDirect, expDirect) {
+		t.Fatalf("dict default frame differs from explicit level 9: seam %d vs %d bytes, direct %d vs %d bytes",
+			len(defFrame), len(expFrame), len(defDirect), len(expDirect))
+	}
+	back, ok := TryDecompressPayload(defFrame, TypeZSTD)
+	if !ok || !bytes.Equal(back, httpish) {
+		t.Fatal("dict-default frame must round-trip under the dict config")
 	}
 }
 
@@ -191,6 +290,135 @@ func TestDictFramesFailClosedWithoutDictConfig(t *testing.T) {
 	}
 }
 
+func TestDictFramesFailClosedAtCodecLevel(t *testing.T) {
+	defer Configure(ZSTDOptions{})
+	httpish, _, _, _ := goldenInputs()
+
+	// Encode one frame per dictionary plus one auto (both-dict)
+	// frame, using the real encoder pools.
+	Configure(ZSTDOptions{DictEnabled: true, Level: 9})
+	frames := map[string][]byte{}
+	for _, tc := range []struct {
+		name string
+		dict Dictionary
+		auto bool
+	}{
+		{"upload", DictUpload, false},
+		{"download", DictDownload, false},
+		{"auto", DictUpload, true},
+	} {
+		frame, err := compressZSTDChoice(httpish, tc.dict, tc.auto)
+		if err != nil {
+			t.Fatalf("%s encode: %v", tc.name, err)
+		}
+		frames[tc.name] = frame
+	}
+
+	// Drop to the legacy (dict-free) config: the pooled decoder
+	// must REJECT every dictionary frame at the codec level —
+	// error, no output bytes — never emit wrong bytes.
+	Configure(ZSTDOptions{})
+	for name, frame := range frames {
+		if out, err := decompressZSTD(frame); err == nil {
+			t.Fatalf("%s dict frame decoded without dict config; got %d bytes (must fail closed)", name, len(out))
+		} else if len(out) != 0 {
+			t.Fatalf("%s dict frame decode errored but returned %d bytes", name, len(out))
+		}
+		if back, ok := TryDecompressPayload(frame, TypeZSTD); ok {
+			t.Fatalf("%s dict frame passed TryDecompressPayload without dict config (%d bytes)", name, len(back))
+		}
+	}
+
+	// A failed decode must not poison the pooled decoder: a
+	// legacy frame must still decode afterwards on the same pool.
+	legacy, err := compressZSTD(httpish)
+	if err != nil {
+		t.Fatalf("legacy encode: %v", err)
+	}
+	if back, err := decompressZSTD(legacy); err != nil || !bytes.Equal(back, httpish) {
+		t.Fatalf("legacy frame must decode after a failed dict decode: err=%v", err)
+	}
+
+	// Raw-decoder level, independent of the pools: a decoder built
+	// with no dictionaries rejects a dictionary frame outright.
+	plainDecoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("plain decoder: %v", err)
+	}
+	defer plainDecoder.Close()
+	if out, err := plainDecoder.DecodeAll(frames["upload"], nil); err == nil {
+		t.Fatalf("no-dict decoder decoded a dict frame (%d bytes)", len(out))
+	}
+}
+
+func TestWrongDictionaryFailsClosed(t *testing.T) {
+	defer Configure(ZSTDOptions{})
+	httpish, _, _, _ := goldenInputs()
+
+	// Encode with each dictionary separately under the dict config.
+	Configure(ZSTDOptions{DictEnabled: true, Level: 9})
+	uploadFrame, err := compressZSTDChoice(httpish, DictUpload, false)
+	if err != nil {
+		t.Fatalf("upload encode: %v", err)
+	}
+	downloadFrame, err := compressZSTDChoice(httpish, DictDownload, false)
+	if err != nil {
+		t.Fatalf("download encode: %v", err)
+	}
+	if bytes.Equal(uploadFrame, downloadFrame) {
+		t.Fatal("upload and download dictionary frames must differ")
+	}
+
+	// A decoder holding ONLY the other dictionary must reject the
+	// frame: the frame's dictionary ID is unknown to it. This is
+	// exactly the version-mismatch path — a retrained dictionary
+	// pair gets NEW IDs, so a peer on a different dictionary
+	// version sees an unknown ID here and fails closed, never
+	// silently accepting the frame or emitting wrong bytes.
+	uploadOnly, err := zstd.NewReader(nil, zstd.WithDecoderDicts(uploadDictionary))
+	if err != nil {
+		t.Fatalf("upload-only decoder: %v", err)
+	}
+	defer uploadOnly.Close()
+	if out, err := uploadOnly.DecodeAll(downloadFrame, nil); err == nil {
+		t.Fatalf("upload-only decoder decoded a download-dict frame (%d bytes, must fail)", len(out))
+	}
+	downloadOnly, err := zstd.NewReader(nil, zstd.WithDecoderDicts(downloadDictionary))
+	if err != nil {
+		t.Fatalf("download-only decoder: %v", err)
+	}
+	defer downloadOnly.Close()
+	if out, err := downloadOnly.DecodeAll(uploadFrame, nil); err == nil {
+		t.Fatalf("download-only decoder decoded an upload-dict frame (%d bytes, must fail)", len(out))
+	}
+
+	// Control: a decoder holding BOTH dictionaries decodes both
+	// frames to the original bytes.
+	both, err := zstd.NewReader(nil, zstd.WithDecoderDicts(uploadDictionary, downloadDictionary))
+	if err != nil {
+		t.Fatalf("both-dict decoder: %v", err)
+	}
+	defer both.Close()
+	for name, frame := range map[string][]byte{"upload": uploadFrame, "download": downloadFrame} {
+		out, err := both.DecodeAll(frame, nil)
+		if err != nil {
+			t.Fatalf("both-dict decoder rejected %s frame: %v", name, err)
+		}
+		if !bytes.Equal(out, httpish) {
+			t.Fatalf("both-dict decoder %s frame: wrong output", name)
+		}
+	}
+
+	// Same check through the pooled codec: under the dict config,
+	// both frames round-trip (the pooled decoder holds both dicts).
+	for name, frame := range map[string][]byte{"upload": uploadFrame, "download": downloadFrame} {
+		back, err := decompressZSTD(frame)
+		if err != nil || !bytes.Equal(back, httpish) {
+			t.Fatalf("pooled decoder %s frame: err=%v", name, err)
+		}
+	}
+}
+
 func TestDictSmallFrameBeatsNoDict(t *testing.T) {
 	defer Configure(ZSTDOptions{})
 	// A short request-shaped frame just above the min-size gate: the
@@ -237,5 +465,13 @@ func TestDictGuardsPreserved(t *testing.T) {
 	comp, used := CompressPayload(httpish, TypeZSTD, DefaultMinSize)
 	if used == TypeZSTD && len(comp) >= len(httpish) {
 		t.Fatal("size check violated: compressed >= input yet marked compressed")
+	}
+
+	// Min-size gate: input at or below minSize stays raw, even
+	// with dictionaries enabled.
+	small := bytes.Repeat([]byte("a"), DefaultMinSize)
+	out, used = CompressPayload(small, TypeZSTD, DefaultMinSize)
+	if used != TypeOff || !bytes.Equal(out, small) {
+		t.Fatal("min-size gate violated: small payload compressed with dict enabled")
 	}
 }
