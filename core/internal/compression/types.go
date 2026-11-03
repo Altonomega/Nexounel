@@ -66,18 +66,10 @@ var (
 		},
 	}
 
-	zstdEncoderPool = sync.Pool{
-		New: func() any {
-			encoder, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
-			return encoder
-		},
-	}
-	zstdDecoderPool = sync.Pool{
-		New: func() any {
-			decoder, _ := zstd.NewReader(nil)
-			return decoder
-		},
-	}
+	// Zstd encoder/decoder pools live in dicts.go: they are rebuilt by
+	// Configure when throughput-pack zstd settings change, and the
+	// default set reproduces the legacy SpeedFastest construction
+	// exactly.
 )
 
 func NormalizeType(value uint8) uint8 {
@@ -127,47 +119,11 @@ func TypeName(value uint8) string {
 }
 
 func CompressPayload(data []byte, compType uint8, minSize int) ([]byte, uint8) {
-	if len(data) == 0 {
-		return data, TypeOff
-	}
-
-	compType = NormalizeAvailableType(compType)
-	if compType == TypeOff {
-		return data, TypeOff
-	}
-	if minSize <= 0 {
-		minSize = DefaultMinSize
-	}
-	if len(data) <= minSize {
-		return data, TypeOff
-	}
-	// TLS, QUIC and media payloads are commonly already compressed. A cheap
-	// entropy sample avoids running a full codec when there is virtually no
-	// compressible structure, reducing latency and battery use on native clients.
-	if payloadEntropyBits(data) >= 7.6 {
-		return data, TypeOff
-	}
-
-	var compData []byte
-	var err error
-
-	switch compType {
-	case TypeZLIB:
-		compData, err = compressZLIB(data)
-	case TypeZSTD:
-		compData, err = compressZSTD(data)
-	case TypeLZ4:
-		compData, err = compressLZ4(data)
-	}
-
-	if err != nil {
-		return data, TypeOff
-	}
-	if len(compData) >= len(data) {
-		return data, TypeOff
-	}
-
-	return compData, compType
+	// Direction-blind seam (see vpnproto.PreparePayload): with
+	// dictionaries enabled, both dictionaries are tried and the
+	// smaller frame wins. Callers that know the direction should use
+	// CompressPayloadForDirection for a single encode.
+	return compressPayload(data, compType, minSize, DictUpload, true)
 }
 
 func payloadEntropyBits(data []byte) float64 {
@@ -265,16 +221,47 @@ func decompressZLIB(data []byte) ([]byte, error) {
 }
 
 func compressZSTD(data []byte) ([]byte, error) {
-	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
-	defer zstdEncoderPool.Put(encoder)
+	return compressZSTDChoice(data, DictUpload, true)
+}
 
-	out := encoder.EncodeAll(data, nil)
-	return out, nil
+// compressZSTDChoice encodes with the current zstd settings. When
+// dictionaries are disabled it is a single plain encode, identical to
+// the legacy path. When dictionaries are enabled and autoDict is set, both dictionaries are tried and the
+// smaller frame is returned; otherwise only the requested dictionary
+// is used. Frames carry their dictionary ID, so a decoder holding
+// both dictionaries (see newZstdCodecSet) decodes either choice, and
+// a peer running a different dictionary version fails closed with an
+// unknown-dictionary error instead of producing output.
+func compressZSTDChoice(data []byte, dict Dictionary, autoDict bool) ([]byte, error) {
+	set := getZstdCodecSet()
+	if !set.options.DictEnabled {
+		return encodeZSTDWithPool(set.plainEncoder, data), nil
+	}
+	if !autoDict {
+		pool := set.uploadEncoder
+		if dict == DictDownload {
+			pool = set.downloadEncoder
+		}
+		return encodeZSTDWithPool(pool, data), nil
+	}
+	upload := encodeZSTDWithPool(set.uploadEncoder, data)
+	download := encodeZSTDWithPool(set.downloadEncoder, data)
+	if len(download) < len(upload) {
+		return download, nil
+	}
+	return upload, nil
+}
+
+func encodeZSTDWithPool(pool *sync.Pool, data []byte) []byte {
+	encoder := pool.Get().(*zstd.Encoder)
+	defer pool.Put(encoder)
+	return encoder.EncodeAll(data, nil)
 }
 
 func decompressZSTD(data []byte) ([]byte, error) {
-	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
-	defer zstdDecoderPool.Put(decoder)
+	set := getZstdCodecSet()
+	decoder := set.decoder.Get().(*zstd.Decoder)
+	defer set.decoder.Put(decoder)
 
 	if err := decoder.Reset(bytes.NewReader(data)); err != nil {
 		return nil, err
