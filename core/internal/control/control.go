@@ -40,6 +40,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
 )
@@ -62,6 +63,9 @@ const (
 	CmdRotateKey = "rotate-key"
 	// CmdListSessions returns per-node session summaries.
 	CmdListSessions = "list-sessions"
+	// CmdListMesh returns the mesh membership table plus the last
+	// heartbeat per member, for the panel mesh view.
+	CmdListMesh = "list-mesh"
 	// CmdAddBootstrapKey installs a pending bootstrap key (derived
 	// from a join token) so the server can trial-decrypt bootstrap
 	// sessions. The key is single-purpose and expires with the token.
@@ -103,6 +107,50 @@ type SessionSummary struct {
 	CreatedAt     time.Time `json:"created_at"`
 	LastActivity  time.Time `json:"last_activity"`
 	ActiveStreams int       `json:"active_streams"`
+}
+
+// MeshHeartbeatSummary is one member's last heartbeat as reported
+// for the panel mesh view: liveness, capacity, leg health, and
+// the last control ack (so a failed config push or rotation is
+// visible, never silently assumed).
+type MeshHeartbeatSummary struct {
+	NodeID            string         `json:"node_id"`
+	State             mesh.NodeState `json:"state"`
+	LastSeen          time.Time      `json:"last_seen"`
+	CapacityBps       float64        `json:"capacity_bps"`
+	Loss              float64        `json:"loss"`
+	LegRTTMs          float64        `json:"leg_rtt_ms"`
+	LegOK             bool           `json:"leg_ok"`
+	ActiveStreams     int            `json:"active_streams"`
+	ForwardPortsBound int            `json:"forward_ports_bound"`
+	ConfigVersion     uint64         `json:"config_version"`
+	StreamConnected   bool           `json:"stream_connected"`
+	LastAckFor        string         `json:"last_ack_for,omitempty"`
+	LastAckError      string         `json:"last_ack_error,omitempty"`
+}
+
+// MeshSnapshot is the mesh state for the panel: the enforced
+// membership table plus the last heartbeat per known member.
+// SnapshotSigning reports whether the mother holds a
+// snapshot-signing key (degraded derivation available to nodes
+// that hold the matching verification key). It never carries
+// key material.
+type MeshSnapshot struct {
+	Table           mesh.Table             `json:"table"`
+	Heartbeats      []MeshHeartbeatSummary `json:"heartbeats"`
+	SnapshotSigning bool                   `json:"snapshot_signing"`
+	GeneratedAt     time.Time              `json:"generated_at"`
+}
+
+// MeshStateSource is the server side of the mesh snapshot: the
+// enforced table plus heartbeat records. It is separate from
+// CodecSwapper because mesh state is control-plane state, not
+// codec state, and a server without a mesh coordinator reports
+// unavailability rather than an empty table.
+type MeshStateSource interface {
+	// MeshSnapshot returns the current mesh snapshot. It must
+	// never return key material.
+	MeshSnapshot() (MeshSnapshot, error)
 }
 
 // MaxRequestBytes bounds one request line: the protocol carries node
@@ -164,6 +212,10 @@ type RegistryHandler struct {
 	// It is optional: servers without bootstrap support reject
 	// those commands rather than silently dropping the keys.
 	bootstrapStore BootstrapKeyStore
+	// meshSource, when set, serves list-mesh. It is optional:
+	// servers without mesh state reject the command rather than
+	// reporting an empty table as if the mesh were empty.
+	meshSource MeshStateSource
 }
 
 // NewRegistryHandler builds a handler. registryPath must be the
@@ -189,6 +241,14 @@ func NewRegistryHandler(registryPath string, method int, swapper CodecSwapper) (
 // for concurrent use with Handle.
 func (h *RegistryHandler) SetBootstrapStore(store BootstrapKeyStore) {
 	h.bootstrapStore = store
+}
+
+// SetMeshSource attaches the mesh snapshot source served by
+// list-mesh. A nil source disables the command. It must be called
+// before Serve starts; it is not safe for concurrent use with
+// Handle.
+func (h *RegistryHandler) SetMeshSource(source MeshStateSource) {
+	h.meshSource = source
 }
 
 // validBootstrapFingerprint reports whether fp is a token
@@ -366,6 +426,15 @@ func (h *RegistryHandler) Handle(ctx context.Context, req Request) Response {
 			})
 		}
 		return Response{Version: ProtocolVersion, OK: true, Data: map[string]any{"sessions": sessions}}
+	case CmdListMesh:
+		if h.meshSource == nil {
+			return Response{Version: ProtocolVersion, Error: "mesh state is not available on this server"}
+		}
+		snap, err := h.meshSource.MeshSnapshot()
+		if err != nil {
+			return Response{Version: ProtocolVersion, Error: err.Error()}
+		}
+		return Response{Version: ProtocolVersion, OK: true, Data: map[string]any{"mesh": snap}}
 	case CmdAddBootstrapKey:
 		fp := strings.TrimSpace(req.Args["fingerprint"])
 		keyHex := strings.TrimSpace(req.Args["key"])
@@ -593,6 +662,30 @@ func (c Client) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 		return nil, fmt.Errorf("decode session summaries: %w", err)
 	}
 	return sessions, nil
+}
+
+// ListMesh returns the server's mesh snapshot (membership table
+// plus last heartbeats). An unavailable mesh source is an error,
+// never an empty table: the panel must show the mesh as
+// unavailable, not as empty.
+func (c Client) ListMesh(ctx context.Context) (MeshSnapshot, error) {
+	resp, err := c.Call(ctx, Request{Command: CmdListMesh})
+	if err != nil {
+		return MeshSnapshot{}, err
+	}
+	raw, ok := resp.Data["mesh"]
+	if !ok {
+		return MeshSnapshot{}, errors.New("list-mesh response carries no mesh snapshot")
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return MeshSnapshot{}, err
+	}
+	var snap MeshSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return MeshSnapshot{}, fmt.Errorf("decode mesh snapshot: %w", err)
+	}
+	return snap, nil
 }
 
 // AddBootstrapKey installs a pending bootstrap key on the server.

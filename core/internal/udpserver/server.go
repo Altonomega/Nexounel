@@ -78,6 +78,12 @@ type Server struct {
 	// keys never authenticate a normal session and expire with
 	// the token. See bootstrap.go.
 	bootstrap bootstrapState
+	// mesh is the mother-side mesh control plane (coordinator,
+	// heartbeats, open control streams). It is nil for servers
+	// built without New (test literals); every mesh entry point
+	// treats nil as unavailable and fails closed. See
+	// mesh_control.go.
+	mesh *meshState
 	// enrollmentIssuer is the panel loopback issuer the enrollment
 	// handler relays through (nil = enrollment unavailable).
 	// enrollLimiter bounds global enrollment attempts.
@@ -400,6 +406,7 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 		advertisedDomains:      servedAdvertisedDomains(cfg.Domain, cfg.AdvertiseDomains),
 		zoneNS:                 outOfZoneNameservers(cfg.Domain, cfg.ZoneNS),
 		sessions:               newSessionStore(cfg.SessionOrphanQueueInitialCap, cfg.StreamQueueInitialCapacity, cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap, cfg.MaxStreamsPerSession, cfg.MaxActiveSessions),
+		mesh:                   newMeshState(nil),
 		deferredDNSSession:     newDeferredSessionProcessor(dnsDeferredWorkers, dnsDeferredQueue, log),
 		deferredConnectSession: newDeferredSessionProcessor(connectDeferredWorkers, connectDeferredQueue, log),
 		invalidCookieTracker:   newInvalidCookieTracker(),

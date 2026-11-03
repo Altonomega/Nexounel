@@ -689,6 +689,100 @@ func (c *Coordinator) PublishTable() (Table, error) {
 	return t, nil
 }
 
+// AddMember admits a member to the enforced table (mother
+// perspective only). Admission follows registry authentication —
+// the caller has already verified the node's session key — never
+// self-assertion. The new member starts ACTIVE with the next
+// tenure sequence (newest) and zero weight until its first
+// heartbeat reports capacity. The change goes through ApplyTable
+// (equal term, version bumped, same chief), so the term rule stays
+// the single gate. It returns false when the member is already
+// present or the caller is not the mother.
+func (c *Coordinator) AddMember(m Member) bool {
+	if !c.isMother {
+		return false
+	}
+	for _, existing := range c.current.Members {
+		if existing.ID == m.ID {
+			return false
+		}
+	}
+	var maxTenure uint64
+	for _, existing := range c.current.Members {
+		if existing.TenureSeq > maxTenure {
+			maxTenure = existing.TenureSeq
+		}
+	}
+	m.State = StateActive
+	m.TenureSeq = maxTenure + 1
+	t := c.current.Clone()
+	t.Members = append(t.Members, m)
+	if t.Weights == nil {
+		t.Weights = make(map[string]float64, len(t.Members))
+	}
+	t.Weights[m.ID] = 0
+	t.Version++
+	return c.ApplyTable(t)
+}
+
+// EnsureChief names a chief when the table has none (mother
+// perspective only): the deterministic ranking over the live member
+// view, issued as a NEW term (T1 for a table that never had a
+// term, otherwise the next normal term — a chief change at equal
+// term is refused by the term rule, so the term must move),
+// version reset to 1 for the new term, via ApplyTable. The first
+// chief is selected the same way every successor is — no special
+// case, no voting. It returns false when a chief already exists,
+// no member is eligible, or the caller is not the mother.
+func (c *Coordinator) EnsureChief() bool {
+	if !c.isMother || c.current.ChiefID != "" {
+		return false
+	}
+	members := make([]Member, 0, len(c.members))
+	for _, st := range c.members {
+		members = append(members, st.member)
+	}
+	chief := RankSuccessor(members, "")
+	if chief == "" {
+		return false
+	}
+	t := c.current.Clone()
+	t.ChiefID = chief
+	if t.Term.IsZero() {
+		t.Term = Term{Number: 1}
+	} else {
+		t.Term = t.Term.NextNormal()
+	}
+	t.Version = 1
+	return c.ApplyTable(t)
+}
+
+// PublishMotherTable computes the next mother-issued table:
+// membership and live liveness/capacity folded from heartbeats,
+// weights recomputed via ComputeWeights, term unchanged, version
+// bumped. Only the mother perspective may publish; a node publishes
+// through PublishTable (chief-only). The caller delivers the table
+// (heartbeat replies carry it to nodes).
+func (c *Coordinator) PublishMotherTable() (Table, error) {
+	if !c.isMother {
+		return Table{}, errors.New("only the mother may publish the membership table")
+	}
+	t := c.current.Clone()
+	for i := range t.Members {
+		if st, ok := c.members[t.Members[i].ID]; ok {
+			t.Members[i].State = st.member.State
+			t.Members[i].CapacityBps = st.member.CapacityBps
+			t.Members[i].Loss = st.member.Loss
+			t.Members[i].LegRTTMs = st.member.LegRTTMs
+			t.Members[i].LegOK = st.member.LegOK
+			t.Members[i].TenureSeq = st.member.TenureSeq
+		}
+	}
+	t.Version++
+	t.Weights = ComputeWeights(t.Members)
+	return t, nil
+}
+
 // tableMembers extracts the member list for weight computation.
 func tableMembers(t Table) []Member { return t.Members }
 

@@ -26,12 +26,14 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	rand "math/rand/v2"
 
 	"github.com/MNSH-Nexo/Nexounel/core/internal/client"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
 	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
@@ -161,10 +163,35 @@ func runSingleSession(ctx context.Context, configPath string, overrides config.C
 		return err
 	}
 	app.PrintBanner()
-	if log := app.Log(); log != nil {
+	log := app.Log()
+	if log != nil {
 		log.Infof("\U0001F680 <green>Nexounel Node Started (single session)</green>")
 	}
+	// Mesh control agent (§4.2): heartbeats and table enforcement
+	// over a reserved control stream. It runs detached and never
+	// fails startup: mesh loss degrades to standalone operation.
+	startMeshAgent(ctx, configPath, overrides, cfg, log,
+		func(ctx context.Context) (net.Conn, error) {
+			attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			return app.OpenReservedStream(attempt, enroll.ControlTarget)
+		},
+		func() heartbeatSnapshot { return singleSessionSnapshot(app) })
 	return app.Run(ctx)
+}
+
+// startMeshAgent builds and starts the mesh control agent, or logs
+// loudly and continues without it when the agent cannot be built.
+// The mesh must never take the tunnel down with it.
+func startMeshAgent(ctx context.Context, configPath string, overrides config.ClientConfigOverrides, cfg config.ClientConfig, log *logger.Logger, openStream func(ctx context.Context) (net.Conn, error), snapshot func() heartbeatSnapshot) {
+	agent := newMeshAgent(cfg, configPath, overrides, openStream, snapshot, log)
+	if agent == nil {
+		if log != nil {
+			log.Warnf("mesh: control agent unavailable; running standalone (no heartbeats, no table enforcement)")
+		}
+		return
+	}
+	go agent.Run(ctx)
 }
 
 // bootstrapNodeClient honors STARTUP_MODE (scale-audit fix F1a): "logs"
@@ -301,6 +328,42 @@ func runMultiSession(ctx context.Context, configPath string, overrides config.Cl
 	}()
 	log.Infof("\U0001F680 <green>Nexounel Node running: forward range <cyan>%s:%d-%d</cyan> across <cyan>%d</cyan> sessions</green>",
 		cfg.ListenIP, lo, hi, len(classes))
+
+	// Mesh control agent (§4.2): heartbeats describe the whole
+	// node (all classes); the control stream rides the first
+	// ready class session. Started after the listeners bind so
+	// the heartbeat's forward-port count is exact.
+	clients := make([]*client.Client, len(coord.classes))
+	for i, session := range coord.classes {
+		clients[i] = session.client
+	}
+	startMeshAgent(ctx, configPath, overrides, cfg, log,
+		func(ctx context.Context) (net.Conn, error) {
+			var firstErr error
+			for _, c := range clients {
+				attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+				conn, err := c.OpenReservedStream(attempt, enroll.ControlTarget)
+				cancel()
+				if err == nil {
+					return conn, nil
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+			}
+			if firstErr != nil {
+				return nil, firstErr
+			}
+			return nil, errors.New("no class session available for the control stream")
+		},
+		func() heartbeatSnapshot {
+			snap := multiSessionSnapshot(classes, clients)
+			snap.ForwardPortsBound = len(listeners)
+			return snap
+		})
 
 	// Block until shutdown; class sessions end with the context.
 	<-ctx.Done()

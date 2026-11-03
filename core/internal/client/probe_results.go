@@ -72,6 +72,31 @@ func (c *Client) ProbeResults() []multisession.ProbeResult {
 	return results
 }
 
+// SyncedMTUs returns the operating point the session synced to (the
+// MTUs the probe pass settled on), or 0,0 before the probe pass
+// completes. The mesh heartbeat reports these for single-session
+// nodes; multi-session nodes report per-class operating points
+// instead. It reads the atomic status mirrors the probe path
+// maintains, so it is race-free without locking the probe state.
+func (c *Client) SyncedMTUs() (upload, download int) {
+	if c == nil {
+		return 0, 0
+	}
+	return int(c.statusUploadMTU.Load()), int(c.statusDownloadMTU.Load())
+}
+
+// ActiveStreamCount returns the number of live local streams
+// (forwarded connections) on this client. Read-only snapshot for
+// the mesh heartbeat.
+func (c *Client) ActiveStreamCount() int {
+	if c == nil {
+		return 0
+	}
+	c.streamsMu.RLock()
+	defer c.streamsMu.RUnlock()
+	return len(c.active_streams)
+}
+
 // connKeyForProbe finds the balancer key of the first connection row for a
 // resolver address. Balancer stats are keyed by connection Key, not by
 // resolver address.

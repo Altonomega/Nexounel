@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -158,6 +159,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Mesh control plane (§4.2): the mother-side coordinator,
+	// heartbeat intake, and evaluation ticker. Registry mode
+	// only: membership comes from the registry, and a single
+	// shared key has no members to coordinate.
+	if registry != nil {
+		snapshotKey := loadMeshSnapshotKey(cfg.MeshSnapshotKeyFile, log)
+		srv.InitMesh(registryIDs, snapshotKey)
+		if len(snapshotKey) > 0 {
+			log.Infof("Mesh snapshot signing: <green>enabled</green>")
+		} else {
+			log.Warnf("MESH_SNAPSHOT_KEY_FILE is not set or unreadable: membership tables are unsigned and degraded derivation stays disabled")
+		}
+		go srv.MeshLoop(ctx)
+	}
+
 	if *metricsAddress != "" {
 		listener, listenErr := net.Listen("tcp", *metricsAddress)
 		if listenErr != nil {
@@ -195,6 +211,9 @@ func main() {
 		// entry. The handler rejects the commands when no store
 		// is attached; the server always supports them.
 		handler.SetBootstrapStore(srv)
+		// Mesh snapshot: the panel's mesh view reads the
+		// enforced table and heartbeats here.
+		handler.SetMeshSource(srv)
 		controlListener, listenErr := control.Listen(cfg.ControlSocketPath)
 		if listenErr != nil {
 			log.Errorf("Control socket setup failed: %v", listenErr)
@@ -271,4 +290,27 @@ func main() {
 	}
 
 	log.Infof("\U0001F6D1 <yellow>Server Stopped</yellow>")
+}
+
+// loadMeshSnapshotKey reads the mesh snapshot-signing key file: 64
+// lowercase hex chars (32 bytes). Any problem — unset path,
+// unreadable file, malformed content — returns nil and logs loudly:
+// unsigned tables are a degraded mode, never a startup failure.
+// Key material is never logged.
+func loadMeshSnapshotKey(path string, log *logger.Logger) []byte {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		log.Warnf("MESH_SNAPSHOT_KEY_FILE unreadable (%s): %v", path, err)
+		return nil
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil || len(key) != 32 {
+		log.Warnf("MESH_SNAPSHOT_KEY_FILE %s must hold 64 hex chars (32 bytes)", path)
+		return nil
+	}
+	return key
 }

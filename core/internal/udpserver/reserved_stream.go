@@ -102,7 +102,7 @@ func (s *Server) processReservedStreamSyn(ctx context.Context, vpnPacket VpnProt
 	// fails closed here, before any stream state is created for
 	// it beyond the pending stream itself.
 	switch target {
-	case enroll.EnrollmentTarget:
+	case enroll.EnrollmentTarget, enroll.ControlTarget:
 		// Served below.
 	default:
 		if s.log != nil {
@@ -146,5 +146,7 @@ func (s *Server) processReservedStreamSyn(ctx context.Context, vpnPacket VpnProt
 	switch target {
 	case enroll.EnrollmentTarget:
 		go s.serveEnrollmentStream(handlerEnd, record)
+	case enroll.ControlTarget:
+		go s.serveControlStream(handlerEnd, record)
 	}
 }

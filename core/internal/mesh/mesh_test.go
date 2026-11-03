@@ -258,6 +258,124 @@ func TestMotherElectionOnChiefLoss(t *testing.T) {
 	}
 }
 
+func TestMotherAddMemberAndEnsureChief(t *testing.T) {
+	c, err := NewCoordinator("", true, Timeouts{}, nil)
+	if err != nil {
+		t.Fatalf("NewCoordinator: %v", err)
+	}
+	if !c.AddMember(Member{ID: "node-a", CapacityBps: 100}) {
+		t.Fatal("AddMember node-a should succeed")
+	}
+	if !c.AddMember(Member{ID: "node-b", CapacityBps: 500}) {
+		t.Fatal("AddMember node-b should succeed")
+	}
+	if c.AddMember(Member{ID: "node-a"}) {
+		t.Error("AddMember must refuse a duplicate")
+	}
+	cur := c.Current()
+	if len(cur.Members) != 2 || cur.Members[0].TenureSeq != 1 || cur.Members[1].TenureSeq != 2 {
+		t.Errorf("tenure assignment wrong: %+v", cur.Members)
+	}
+	if cur.Members[0].State != StateActive || cur.Weights["node-a"] != 0 {
+		t.Errorf("new member must start ACTIVE with zero weight: %+v weights=%v", cur.Members[0], cur.Weights)
+	}
+	if !c.EnsureChief() {
+		t.Fatal("EnsureChief should name a chief")
+	}
+	if c.Current().ChiefID != "node-a" {
+		t.Errorf("chief = %q, want node-a (longest tenure)", c.Current().ChiefID)
+	}
+	if c.EnsureChief() {
+		t.Error("EnsureChief must be a no-op once a chief exists")
+	}
+	// Node perspective refuses both operations.
+	node, _ := NewCoordinator("node-a", false, Timeouts{}, nil)
+	if node.AddMember(Member{ID: "node-x"}) {
+		t.Error("node perspective must not admit members")
+	}
+	if node.EnsureChief() {
+		t.Error("node perspective must not elect a chief")
+	}
+	if _, err := node.PublishMotherTable(); err == nil {
+		t.Error("node perspective must not publish mother tables")
+	}
+}
+
+func TestMotherPublishFoldsHeartbeats(t *testing.T) {
+	c, _ := NewCoordinator("", true, Timeouts{}, nil)
+	c.AddMember(Member{ID: "node-a"})
+	c.AddMember(Member{ID: "node-b"})
+	now := time.Now()
+	c.NoteHeartbeat("node-a", 100, 0.1, 20, true, now)
+	c.NoteHeartbeat("node-b", 300, 0.0, 10, true, now)
+	tbl, err := c.PublishMotherTable()
+	if err != nil {
+		t.Fatalf("PublishMotherTable: %v", err)
+	}
+	if tbl.Version != c.Current().Version+1 {
+		t.Errorf("published version %d, want current+1", tbl.Version)
+	}
+	var a, b *Member
+	for i := range tbl.Members {
+		switch tbl.Members[i].ID {
+		case "node-a":
+			a = &tbl.Members[i]
+		case "node-b":
+			b = &tbl.Members[i]
+		}
+	}
+	if a == nil || b == nil {
+		t.Fatalf("members missing: %+v", tbl.Members)
+	}
+	if a.CapacityBps != 100 || b.CapacityBps != 300 {
+		t.Errorf("capacities not folded: a=%v b=%v", a.CapacityBps, b.CapacityBps)
+	}
+	if tbl.Weights["node-a"] >= tbl.Weights["node-b"] {
+		t.Errorf("weights must follow capacity: %v", tbl.Weights)
+	}
+	if tbl.Weights["node-a"]+tbl.Weights["node-b"] < 0.99 {
+		t.Errorf("weights must sum to ~1: %v", tbl.Weights)
+	}
+	// Publishing does not itself change the enforced table (the
+	// caller applies it through the normal path).
+	if c.Current().Weights["node-b"] != 0 {
+		t.Error("PublishMotherTable must not mutate the enforced table")
+	}
+}
+
+func TestMotherElectionTableAppliesThroughTermRule(t *testing.T) {
+	c, _ := NewCoordinator("", true, Timeouts{}, nil)
+	c.ApplyTable(Table{Term: Term{Number: 2}, Version: 1, ChiefID: "node-a", Members: []Member{
+		{ID: "node-a", State: StateActive, CapacityBps: 100, TenureSeq: 1},
+		{ID: "node-b", State: StateActive, CapacityBps: 500, TenureSeq: 2},
+	}})
+	t0 := time.Now()
+	c.NoteHeartbeat("node-a", 100, 0, 10, true, t0)
+	c.NoteHeartbeat("node-b", 500, 0, 10, true, t0)
+	later := t0.Add(61 * time.Second)
+	c.NoteHeartbeat("node-b", 500, 0, 10, true, later)
+	var found *Event
+	for _, e := range c.Evaluate(later) {
+		if e.Kind == EventChiefLost {
+			ev := e
+			found = &ev
+		}
+	}
+	if found == nil {
+		t.Fatal("expected chief-lost event")
+	}
+	elected := c.Current()
+	elected.ChiefID = found.Successor
+	elected.Term = found.Term
+	elected.Version = 1
+	if !c.ApplyTable(elected) {
+		t.Fatal("election table (higher term) must apply")
+	}
+	if c.Current().ChiefID != "node-b" || c.Current().Term != (Term{Number: 3}) {
+		t.Errorf("elected table wrong: %+v", c.Current())
+	}
+}
+
 func TestDegradedDerivationDeterministic(t *testing.T) {
 	key := []byte("snapshot-signing-key-for-tests-only")
 	snapshotTable := Table{Term: Term{Number: 5}, Version: 4, ChiefID: "node-a", Members: []Member{

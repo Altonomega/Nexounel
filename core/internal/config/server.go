@@ -241,6 +241,15 @@ type ServerConfig struct {
 	// enrollment unavailable: attempts fail transiently and the
 	// node retries, per the panel-down case in §3.5.
 	EnrollmentIssuerURL string `toml:"ENROLLMENT_ISSUER_URL"`
+	// MeshSnapshotKeyFile is the file holding the mesh
+	// snapshot-signing key (§6): 64 lowercase hex chars (32
+	// bytes), mode 600. The mother signs membership snapshots
+	// with it; nodes that hold the matching verification key
+	// (issued at enrollment, future work) derive the degraded
+	// chief from the last verified snapshot. Empty (default) =
+	// unsigned tables: the mesh still works, degraded
+	// derivation stays disabled everywhere.
+	MeshSnapshotKeyFile string `toml:"MESH_SNAPSHOT_KEY_FILE"`
 	// ForwardPortRange ("lo-hi") is the allowlist of target ports a
 	// client may request in a TCP-forward STREAM_SYN payload. Empty =
 	// legacy behavior: every stream goes to FORWARD_IP:FORWARD_PORT.
