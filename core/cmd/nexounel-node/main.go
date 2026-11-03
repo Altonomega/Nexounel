@@ -103,7 +103,7 @@ func main() {
 	defer stop()
 
 	if !cfg.MultiSessionEnabled {
-		if err := runSingleSession(sigCtx, resolvedConfigPath, overrides); err != nil {
+		if err := runSingleSession(sigCtx, resolvedConfigPath, overrides, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Node stopped: %v\n", err)
 			os.Exit(1)
 		}
@@ -118,8 +118,8 @@ func main() {
 
 // runSingleSession is the upstream single-session behavior: one client,
 // one operating point, its own listeners.
-func runSingleSession(ctx context.Context, configPath string, overrides config.ClientConfigOverrides) error {
-	app, err := client.Bootstrap(configPath, overrides)
+func runSingleSession(ctx context.Context, configPath string, overrides config.ClientConfigOverrides, cfg config.ClientConfig) error {
+	app, err := bootstrapNodeClient(configPath, overrides, cfg)
 	if err != nil {
 		return err
 	}
@@ -128,6 +128,20 @@ func runSingleSession(ctx context.Context, configPath string, overrides config.C
 		log.Infof("\U0001F680 <green>Nexounel Node Started (single session)</green>")
 	}
 	return app.Run(ctx)
+}
+
+// bootstrapNodeClient honors STARTUP_MODE (scale-audit fix F1a): "logs"
+// (the default) attempts the resolver-cache fast start and falls back to
+// the full probe when the cache is empty or yields nothing usable; any
+// other mode always runs the full probe. The scan-only path keeps the
+// plain Bootstrap: its contract is a full scan.
+func bootstrapNodeClient(configPath string, overrides config.ClientConfigOverrides, cfg config.ClientConfig) (*client.Client, error) {
+	if strings.EqualFold(strings.TrimSpace(cfg.StartupMode), "logs") {
+		if entries := client.ScanResolverCacheLogs(cfg.ResolvedLogDir(), cfg.LogScanMaxDays, cfg.LogScanMaxResolvers); len(entries) > 0 {
+			return client.BootstrapFromLogs(configPath, entries, overrides)
+		}
+	}
+	return client.Bootstrap(configPath, overrides)
 }
 
 // runMultiSession probes, clusters, starts one session per capacity
@@ -155,7 +169,7 @@ func runMultiSession(ctx context.Context, configPath string, overrides config.Cl
 	// its results feed the clusterer and it is then discarded.
 	probeCtx, cancelProbe := context.WithCancel(ctx)
 	defer cancelProbe()
-	probeClient, err := client.Bootstrap(configPath, overrides)
+	probeClient, err := bootstrapNodeClient(configPath, overrides, cfg)
 	if err != nil {
 		return fmt.Errorf("probe client: %w", err)
 	}
@@ -178,10 +192,13 @@ func runMultiSession(ctx context.Context, configPath string, overrides config.Cl
 			i, len(class.Members), class.OperatingUpload, class.OperatingDownload, class.Score, multisession.Weight(class))
 	}
 
-	// Phase 2 — one session per class. Per-class configs clamp the probe
-	// search to the class operating point (floors lowered so a small
-	// class can still complete its probe) and suppress local listeners:
-	// the coordinator owns the forward-range listeners.
+	// Phase 2 — one session per class. Per-class configs clamp the operating
+	// point ceilings to the class operating point (floors lowered so a small
+	// class can still complete a fallback probe) and suppress local
+	// listeners: the coordinator owns the forward-range listeners. Each
+	// class client starts from the probe pass's measurements (F1c) instead
+	// of re-probing its members; only members without a measurement are
+	// scanned, by the normal hybrid path.
 	coord := &coordinator{
 		classes: make([]*classSession, 0, len(classes)),
 		log:     log,
@@ -207,7 +224,19 @@ func runMultiSession(ctx context.Context, configPath string, overrides config.Cl
 				Port: member.Port,
 			})
 		}
-		classClient, err := client.Bootstrap(configPath, classOverrides)
+		// Scale-audit fix F1c: the probe pass just measured every member.
+		// Pass the measurements through (capped at the class operating
+		// point, reproducing what a clamped re-probe would find) instead
+		// of re-running the binary search once per class. Members the
+		// probe pass rejected are never class members; a member missing
+		// from the measurements is fully scanned by the hybrid path.
+		measured := make([]multisession.ProbeResult, 0, len(class.Members))
+		for _, member := range class.Members {
+			member.UploadMTU = min(member.UploadMTU, class.OperatingUpload)
+			member.DownloadMTU = min(member.DownloadMTU, class.OperatingDownload)
+			measured = append(measured, member)
+		}
+		classClient, err := client.BootstrapWithMeasuredMTUs(configPath, classOverrides, measured)
 		if err != nil {
 			return fmt.Errorf("class %d client: %w", i, err)
 		}
