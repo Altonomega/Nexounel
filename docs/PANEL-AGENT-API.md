@@ -107,7 +107,12 @@ curl -s -b "$JAR" "$PANEL/$SECRET/api/status"
   dictionaries enabled drops dictionary frames. The compression
   endpoints always report `symmetric` and, on mismatch, `warning`
   with the fail-closed warning text. Treat a non-empty `warning` as
-  "do not leave it like this".
+  "do not leave it like this". Enabling dictionaries through the
+  panel also switches the node's negotiated compression types to
+  ZSTD (1): the dictionary settings only affect zstd frames, so
+  leaving the types at the LZ4 default would leave the dictionaries
+  configured but inert on the wire. Disabling switches them back
+  to LZ4 (2).
 - **Keys are shown once.** `add` (generated key) and `rotate`
   responses include `key_shown_once` exactly once, in that response
   only. It is never retrievable again and never logged; only the key
@@ -299,20 +304,41 @@ file's own current value):
 
 Constraints: `level` must be 0–22 (0 keeps the legacy SpeedFastest
 encoder; 9 is the measured knee). Unknown JSON fields are rejected
-with 400.
+with 400. The request carries no compression-type fields: the node
+types are derived from `dict_enabled` (1 on enable, 2 on disable),
+including for partial updates that only change `level`.
 
 Write semantics (fail-closed):
 
-- The edit is line-based and touches **only** the three `ZSTD_*`
-  lines in each file (replacing the line if the key exists,
-  appending it if absent). Every other byte — comments, ordering,
-  unrelated keys — is preserved.
+- The edit is line-based. The server file gets **only** the three
+  `ZSTD_*` lines (replacing the line if the key exists, appending
+  it if absent). The node file gets the three `ZSTD_*` lines **plus**
+  `UPLOAD_COMPRESSION_TYPE` and `DOWNLOAD_COMPRESSION_TYPE`,
+  derived from `dict_enabled`: **1 (ZSTD)** when enabling, **2
+  (LZ4, the documented default)** when disabling. The type switch
+  is what engages the dictionaries: the dictionary settings only
+  affect zstd frames, and the presets default both negotiated types
+  to LZ4, so writing the `ZSTD_*` keys alone would leave sessions
+  negotiating LZ4 with the dictionaries inert. Every other byte —
+  comments, ordering, unrelated keys — is preserved. The panel
+  control owns all five keys on the node file as one bundle:
+  applying it replaces a hand-set custom type (0/3) with the
+  derived value; the previous file is preserved as `.bak` for
+  recovery.
+- The server config has no singular compression-type keys: it
+  negotiates through `SUPPORTED_UPLOAD/DOWNLOAD_COMPRESSION_TYPES`
+  lists, which default to all types. Enabling dictionaries is
+  refused (422, nothing written) when the server's resolved
+  `SUPPORTED_*` lists exclude ZSTD (1) in either direction,
+  because the server would resolve negotiated zstd requests to
+  Off and the dictionaries could not engage; add 1 to both lists
+  (or remove the restriction) by hand and retry.
 - Both edited files are validated by reloading them with the real
   config loaders **before either is installed**, and the previous
   file is preserved as `<config>.bak` next to it (atomic temp +
   rename, mode 0600). A bad edit never replaces a working config;
   on failure the response is **422** and neither file changes.
-- If a config file contains TOML table sections and a `ZSTD_*` key
+- If a config file contains TOML table sections and a managed key
   is absent, the edit is refused (appending would land inside the
   table and silently have no effect).
 

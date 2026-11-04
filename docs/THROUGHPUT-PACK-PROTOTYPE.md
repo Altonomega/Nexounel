@@ -199,7 +199,18 @@ legacy→default deltas are the level-9 default doing its work.
 ## Production settings (dictionary compression, 2026-11-03)
 
 - `ZSTD_DICT_ENABLED=true`, `ZSTD_LEVEL=9` (explicit),
-  `ZSTD_LONG_ENABLED=false` (default; leave unset or false).
+  `ZSTD_LONG_ENABLED=false` (default; leave unset or false),
+  **plus, on the node config, `UPLOAD_COMPRESSION_TYPE=1` and
+  `DOWNLOAD_COMPRESSION_TYPE=1` (ZSTD)**. The type switch is part
+  of enablement, not an optional extra: the dictionary settings
+  only affect zstd frames, and the presets default both negotiated
+  types to LZ4 (2), so `ZSTD_*` keys alone leave sessions
+  negotiating LZ4 with the dictionaries configured but inert on
+  the wire. The server needs no type keys: it negotiates through
+  `SUPPORTED_UPLOAD/DOWNLOAD_COMPRESSION_TYPES`, which default to
+  all types — but if an operator restricted those lists, ZSTD (1)
+  must be admitted in both, or the server resolves negotiated
+  zstd requests to Off.
   `ZSTD_LEVEL=0` with dicts enabled now resolves to 9 in
   `compression.Configure`, but set 9 explicitly so the effective
   level is visible in the config file. `ZSTD_LEVEL` 1..22
@@ -236,9 +247,15 @@ legacy→default deltas are the level-9 default doing its work.
    dictionary IDs will drop dictionary frames.
 2. Set on BOTH the server config and the node config:
    `ZSTD_DICT_ENABLED=true`, `ZSTD_LEVEL=9`,
-   `ZSTD_LONG_ENABLED=false`. Keep the compression-type
-   settings (`UPLOAD/DOWNLOAD_COMPRESSION_TYPE`) as they are;
-   dictionaries apply to the zstd codec only.
+   `ZSTD_LONG_ENABLED=false`. On the NODE config also set
+   `UPLOAD_COMPRESSION_TYPE=1` and `DOWNLOAD_COMPRESSION_TYPE=1`
+   (ZSTD): dictionaries apply to the zstd codec only, and the
+   defaults negotiate LZ4 — without the type switch the
+   dictionaries stay inert. (The panel compression control does
+   all five keys at once; hand-editing must do the same.) If the
+   server config carries explicit `SUPPORTED_*_COMPRESSION_TYPES`
+   lists, confirm ZSTD (1) is admitted in both; absent lists
+   default to all types.
 3. Restart BOTH processes. `Configure` runs once at startup;
    changing the config file without a restart changes nothing.
    Restart one end, then the other — during the window, the
@@ -253,7 +270,8 @@ legacy→default deltas are the level-9 default doing its work.
    disagree on settings or version: stop and compare configs
    and binary versions, do not "fix" it by toggling one end.
 5. Rollback: set `ZSTD_DICT_ENABLED=false` on BOTH ends and
-   restart both. Dictionary-free frames decode under either
+   set the node `UPLOAD/DOWNLOAD_COMPRESSION_TYPE` back to 2
+   (LZ4), then restart both. Dictionary-free frames decode under either
    config, so rollback traffic flows as soon as both ends are
    back on the legacy encoder; a half-rolled-back pair still
    drops the dict-enabled end's frames.
