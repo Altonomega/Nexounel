@@ -166,3 +166,37 @@ func TestControlFrameMultipleSequential(t *testing.T) {
 		t.Fatalf("expected EOF after two frames, got %v", err)
 	}
 }
+
+// TestHeartbeatFullResolverListExceedsFrameLimit pins the M2
+// field-test failure mode: a heartbeat carrying one entry per
+// resolver in a 1,064-resolver fleet does not fit MaxControlFrameBytes
+// (64 KiB). Heartbeats must therefore carry aggregate resolver
+// counts (see ResolverUsable/ResolverRejected), never the list.
+func TestHeartbeatFullResolverListExceedsFrameLimit(t *testing.T) {
+	hb := Heartbeat{NodeID: "node-1", Role: "plain", Version: "0.2.0", Term: Term{Number: 1}, SentAt: time.Now().UTC()}
+	for i := 0; i < 1064; i++ {
+		hb.Resolvers = append(hb.Resolvers, ResolverHealth{
+			Address: "198.51.100.1:53", State: "usable",
+			UploadMTU: 110, DownloadMTU: 1015, Loss: 0.05,
+		})
+	}
+	var buf bytes.Buffer
+	if err := WriteFrame(&buf, KindHeartbeat, hb); err == nil {
+		t.Fatalf("fleet-scale resolver list framed at %d bytes, want rejection over %d", buf.Len(), MaxControlFrameBytes)
+	} else if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("WriteFrame error = %v, want a frame-limit rejection", err)
+	}
+	t.Logf("1,064-resolver heartbeat is rejected as oversized (limit %d bytes)", MaxControlFrameBytes)
+
+	// The aggregate form — the only form a node may send — fits
+	// with room to spare at any fleet size.
+	agg := Heartbeat{NodeID: "node-1", Role: "plain", Version: "0.2.0", Term: Term{Number: 1}, SentAt: time.Now().UTC(), ResolverUsable: 957, ResolverRejected: 107}
+	buf.Reset()
+	if err := WriteFrame(&buf, KindHeartbeat, agg); err != nil {
+		t.Fatalf("aggregate heartbeat must frame: %v", err)
+	}
+	if buf.Len() > MaxControlFrameBytes/4 {
+		t.Fatalf("aggregate heartbeat = %d bytes, want well under the limit", buf.Len())
+	}
+	t.Logf("aggregate heartbeat frames at %d bytes", buf.Len())
+}

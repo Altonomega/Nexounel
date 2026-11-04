@@ -324,6 +324,8 @@ func (st *meshState) MeshSnapshot() (control.MeshSnapshot, error) {
 			ActiveStreams:     rec.heartbeat.ActiveStreams,
 			ForwardPortsBound: rec.heartbeat.ForwardPortsBound,
 			ConfigVersion:     rec.heartbeat.ConfigVersion,
+			ResolverUsable:    rec.heartbeat.ResolverUsable,
+			ResolverRejected:  rec.heartbeat.ResolverRejected,
 			StreamConnected:   false,
 		}
 		if _, ok := st.streams[id]; ok {

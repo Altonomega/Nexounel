@@ -189,17 +189,27 @@ type PeerReachability struct {
 // end-to-end forward proof (a dial-based check would open spurious
 // upstream connections; see the milestone doc).
 type Heartbeat struct {
-	NodeID            string             `json:"node_id"`
-	Role              string             `json:"role"` // "plain" or "chief"
-	Version           string             `json:"version"`
-	Term              Term               `json:"term"`
-	CapacityBps       float64            `json:"capacity_bps"`
-	Loss              float64            `json:"loss"`
-	LegRTTMs          float64            `json:"leg_rtt_ms"`
-	LegOK             bool               `json:"leg_ok"`
-	ActiveStreams     int                `json:"active_streams"`
-	Classes           []ClassCapacity    `json:"classes"`
-	Resolvers         []ResolverHealth   `json:"resolvers"`
+	NodeID        string           `json:"node_id"`
+	Role          string           `json:"role"` // "plain" or "chief"
+	Version       string           `json:"version"`
+	Term          Term             `json:"term"`
+	CapacityBps   float64          `json:"capacity_bps"`
+	Loss          float64          `json:"loss"`
+	LegRTTMs      float64          `json:"leg_rtt_ms"`
+	LegOK         bool             `json:"leg_ok"`
+	ActiveStreams int              `json:"active_streams"`
+	Classes       []ClassCapacity  `json:"classes"`
+	Resolvers     []ResolverHealth `json:"resolvers"`
+	// ResolverUsable/ResolverRejected are the aggregate counts of
+	// the snapshot's resolver list. The per-resolver list itself
+	// must never be sent: at fleet scale (1,064 resolvers) it blows
+	// MaxControlFrameBytes and no heartbeat ever reaches the
+	// mother. Nothing on the mother consumes the list — capacity,
+	// loss, and liveness are the heartbeat's payload — and full
+	// per-resolver health stays available from the node's cache
+	// logs, which the panel reads locally under its own cap.
+	ResolverUsable    int                `json:"resolver_usable"`
+	ResolverRejected  int                `json:"resolver_rejected"`
 	Reachability      []PeerReachability `json:"reachability"`
 	ForwardPortsBound int                `json:"forward_ports_bound"`
 	ConfigVersion     uint64             `json:"config_version"`

@@ -466,10 +466,35 @@ func (a *meshAgent) serve(ctx context.Context, conn net.Conn) {
 	}
 }
 
+// summarizeResolverHealth counts a snapshot's resolver list by
+// state. The counts — not the list — travel in the heartbeat: a
+// fleet-scale list blows the 64 KiB control-frame bound and no
+// heartbeat ever reaches the mother (M2 field test, 2026-11-03:
+// 0 heartbeats in ~3 h on the 1,064-resolver fleet, silent at the
+// default log level). Unknown states count as rejected: a heartbeat
+// must never overstate usable resolvers.
+func summarizeResolverHealth(resolvers []mesh.ResolverHealth) (usable, rejected int) {
+	for _, r := range resolvers {
+		if r.State == "usable" {
+			usable++
+		} else {
+			rejected++
+		}
+	}
+	return usable, rejected
+}
+
 // sendHeartbeat snapshots the node's state, stamps identity, and
 // writes one heartbeat frame. A failed write ends the stream via
 // the reader's deadline; the send itself never blocks the agent:
 // the write deadline bounds it.
+//
+// The heartbeat carries resolver aggregates only. The snapshot's
+// per-resolver list is summarized here — never serialized —
+// because at fleet scale it exceeds mesh.MaxControlFrameBytes and
+// the mother never consumes the list. Failing to write a heartbeat
+// is a control-plane outage and is logged loudly: the previous
+// Debug-level log hid the fleet-scale failure for ~3 hours.
 func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 	snap := a.snapshot()
 	snap.Reachability = a.cachedReachability()
@@ -481,6 +506,7 @@ func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 	}
 	version := a.appliedVersion
 	a.mu.Unlock()
+	usable, rejected := summarizeResolverHealth(snap.Resolvers)
 	hb := mesh.Heartbeat{
 		NodeID:            a.nodeID,
 		Role:              role,
@@ -492,7 +518,8 @@ func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 		LegOK:             snap.LegOK,
 		ActiveStreams:     snap.ActiveStreams,
 		Classes:           snap.Classes,
-		Resolvers:         snap.Resolvers,
+		ResolverUsable:    usable,
+		ResolverRejected:  rejected,
 		Reachability:      snap.Reachability,
 		ForwardPortsBound: snap.ForwardPortsBound,
 		ConfigVersion:     version,
@@ -501,7 +528,7 @@ func (a *meshAgent) sendHeartbeat(conn net.Conn) {
 	_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	if err := mesh.WriteFrame(conn, mesh.KindHeartbeat, hb); err != nil {
 		if a.log != nil {
-			a.log.Debugf("mesh: heartbeat write failed: %v", err)
+			a.log.Warnf("mesh: heartbeat write failed (%d resolvers in snapshot): %v", len(snap.Resolvers), err)
 		}
 		// Break the reader out: closing the stream is the only
 		// signal the read loop needs.

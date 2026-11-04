@@ -124,6 +124,8 @@ type MeshHeartbeatSummary struct {
 	ActiveStreams     int            `json:"active_streams"`
 	ForwardPortsBound int            `json:"forward_ports_bound"`
 	ConfigVersion     uint64         `json:"config_version"`
+	ResolverUsable    int            `json:"resolver_usable"`
+	ResolverRejected  int            `json:"resolver_rejected"`
 	StreamConnected   bool           `json:"stream_connected"`
 	LastAckFor        string         `json:"last_ack_for,omitempty"`
 	LastAckError      string         `json:"last_ack_error,omitempty"`
