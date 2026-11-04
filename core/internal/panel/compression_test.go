@@ -72,11 +72,41 @@ func assertOnlyZSTDChanged(t *testing.T, before, after []byte) {
 		key := strings.TrimSpace(trimmed[:eq])
 		return key == "ZSTD_DICT_ENABLED" || key == "ZSTD_LEVEL" || key == "ZSTD_LONG_ENABLED"
 	}
+	assertOnlyKeysChanged(t, before, after, isZSTD)
+}
+
+// assertOnlyCompressionKeysChanged is the node-side counterpart of
+// assertOnlyZSTDChanged: the node edit may also touch the two
+// negotiated compression-type keys, and nothing else.
+func assertOnlyCompressionKeysChanged(t *testing.T, before, after []byte) {
+	t.Helper()
+	isManaged := func(line string) bool {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+		eq := strings.Index(trimmed, "=")
+		if eq < 0 {
+			return false
+		}
+		key := strings.TrimSpace(trimmed[:eq])
+		switch key {
+		case "ZSTD_DICT_ENABLED", "ZSTD_LEVEL", "ZSTD_LONG_ENABLED",
+			"UPLOAD_COMPRESSION_TYPE", "DOWNLOAD_COMPRESSION_TYPE":
+			return true
+		}
+		return false
+	}
+	assertOnlyKeysChanged(t, before, after, isManaged)
+}
+
+func assertOnlyKeysChanged(t *testing.T, before, after []byte, isManaged func(string) bool) {
+	t.Helper()
 	beforeLines := strings.Split(strings.TrimSuffix(string(before), "\n"), "\n")
 	afterLines := strings.Split(strings.TrimSuffix(string(after), "\n"), "\n")
 	j := 0
 	for _, line := range beforeLines {
-		if isZSTD(line) {
+		if isManaged(line) {
 			continue
 		}
 		found := false
@@ -86,17 +116,17 @@ func assertOnlyZSTDChanged(t *testing.T, before, after []byte) {
 				j++
 				break
 			}
-			if !isZSTD(afterLines[j]) {
-				t.Fatalf("non-ZSTD line %q was changed or dropped; after:\n%s", line, string(after))
+			if !isManaged(afterLines[j]) {
+				t.Fatalf("non-managed line %q was changed or dropped; after:\n%s", line, string(after))
 			}
 		}
 		if !found {
-			t.Fatalf("non-ZSTD line %q missing from edited file:\n%s", line, string(after))
+			t.Fatalf("non-managed line %q missing from edited file:\n%s", line, string(after))
 		}
 	}
 	for ; j < len(afterLines); j++ {
-		if !isZSTD(afterLines[j]) {
-			t.Fatalf("unexpected new non-ZSTD line %q in edited file:\n%s", afterLines[j], string(after))
+		if !isManaged(afterLines[j]) {
+			t.Fatalf("unexpected new non-managed line %q in edited file:\n%s", afterLines[j], string(after))
 		}
 	}
 }
@@ -143,6 +173,54 @@ func writeTempConfig(t *testing.T, data []byte) string {
 	return path
 }
 
+func TestEditNodeCompressionLinesReplacesAndAppends(t *testing.T) {
+	settings := CompressionSettings{DictEnabled: true, Level: 9, LongEnabled: false}
+	data := "# Node with a present type key and a comment to keep.\n" +
+		"DOMAINS = [\"tunnel.example.invalid\"]\n" +
+		"ENCRYPTION_KEY = \"00112233445566778899aabbccddeeff\"\n" +
+		"DOWNLOAD_COMPRESSION_TYPE = 2 # keep this comment\n" +
+		"ZSTD_DICT_ENABLED = false\n"
+	edited, err := editNodeCompressionLines([]byte(data), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOnlyCompressionKeysChanged(t, []byte(data), edited)
+	if !strings.Contains(string(edited), "DOWNLOAD_COMPRESSION_TYPE = 1 # keep this comment") {
+		t.Fatalf("present type key not replaced with comment preserved:\n%s", edited)
+	}
+	if !strings.Contains(string(edited), "ZSTD_DICT_ENABLED = true") {
+		t.Fatalf("ZSTD key not replaced:\n%s", edited)
+	}
+	// Absent keys are appended in fixed order: ZSTD keys, then types.
+	tail := "ZSTD_LEVEL = 9\nZSTD_LONG_ENABLED = false\nUPLOAD_COMPRESSION_TYPE = 1\n"
+	if !strings.HasSuffix(string(edited), tail) {
+		t.Fatalf("appended keys not in fixed order at end:\n%s", edited)
+	}
+	if _, err := config.LoadClientConfig(writeTempConfig(t, edited)); err != nil {
+		t.Fatalf("edited node config does not reload: %v", err)
+	}
+
+	// A type key missing behind a table section is refused, like a
+	// missing ZSTD key.
+	tableData := "ZSTD_DICT_ENABLED = false\nZSTD_LEVEL = 1\nZSTD_LONG_ENABLED = false\n" +
+		"UPLOAD_COMPRESSION_TYPE = 2\n[other]\nfoo = 1\n"
+	if _, err := editNodeCompressionLines([]byte(tableData), settings); err == nil {
+		t.Fatal("table-section append of a missing type key must be refused")
+	}
+}
+
+func TestEditCompressionLinesServerWritesNoTypeKeys(t *testing.T) {
+	// The server edit must not write singular type keys: the server
+	// config has no such fields and the loader would ignore them.
+	settings := CompressionSettings{DictEnabled: true, Level: 9, LongEnabled: false}
+	edited, err := editCompressionLines([]byte(fixtureServerConfig), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(edited), "COMPRESSION_TYPE") {
+		t.Fatalf("server edit wrote a compression-type key:\n%s", edited)
+	}
+}
 func TestEditCompressionLinesIgnoresCommentsAndTables(t *testing.T) {
 	settings := CompressionSettings{DictEnabled: true, Level: 5, LongEnabled: true}
 	// A commented-out key must not count as present: the real key is appended.
@@ -181,9 +259,12 @@ func TestApplyCompressionSettingsRoundTrip(t *testing.T) {
 	serverAfter, _ := os.ReadFile(serverPath)
 	nodeAfter, _ := os.ReadFile(nodePath)
 	assertOnlyZSTDChanged(t, serverBefore, serverAfter)
-	assertOnlyZSTDChanged(t, nodeBefore, nodeAfter)
+	assertOnlyCompressionKeysChanged(t, nodeBefore, nodeAfter)
 
-	// Reloaded values match the request on both sides.
+	// Reloaded values match the request on both sides, and the node
+	// negotiated types switched to ZSTD (1) so the dictionaries
+	// actually engage. The server file carries no singular type
+	// keys: the server negotiates through SUPPORTED_* lists.
 	sc, err := config.LoadServerConfig(serverPath)
 	if err != nil {
 		t.Fatal(err)
@@ -191,12 +272,18 @@ func TestApplyCompressionSettingsRoundTrip(t *testing.T) {
 	if !sc.ZSTDDictEnabled || sc.ZSTDLevel != 9 || sc.ZSTDLongEnabled {
 		t.Fatalf("server settings after apply: %+v", sc)
 	}
+	if strings.Contains(string(serverAfter), "COMPRESSION_TYPE") {
+		t.Fatalf("server file gained a compression-type key:\n%s", serverAfter)
+	}
 	nc, err := config.LoadClientConfig(nodePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !nc.ZSTDDictEnabled || nc.ZSTDLevel != 9 || nc.ZSTDLongEnabled {
 		t.Fatalf("node settings after apply: %+v", nc)
+	}
+	if nc.UploadCompressionType != 1 || nc.DownloadCompressionType != 1 {
+		t.Fatalf("node compression types after enable: upload %d download %d, want 1/1", nc.UploadCompressionType, nc.DownloadCompressionType)
 	}
 	// Previous files preserved as .bak, byte-identical.
 	serverBak, err := os.ReadFile(serverPath + ".bak")
@@ -243,7 +330,10 @@ func TestApplyCompressionSettingsRoundTrip(t *testing.T) {
 func TestApplyCompressionSettingsPartialUpdate(t *testing.T) {
 	_, serverPath, nodePath := writeCompressionFixtures(t)
 	// Only the level changes; dict/long keep each file's own values
-	// (node starts at level 3, server at 0).
+	// (node starts at level 3, server at 0). The derived node types
+	// follow the resolved dict state (off), so they are written as
+	// 2 even though the update did not mention dictionaries: a
+	// level-only tweak must not leave a stale ZSTD type behind.
 	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, CompressionSettingsUpdate{Level: intPtr(9)}); err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +344,100 @@ func TestApplyCompressionSettingsPartialUpdate(t *testing.T) {
 	}
 	if sc.ZSTDDictEnabled || nc.ZSTDDictEnabled {
 		t.Fatal("partial update changed dict enablement")
+	}
+	if nc.UploadCompressionType != 2 || nc.DownloadCompressionType != 2 {
+		t.Fatalf("node compression types after dict-off partial update: upload %d download %d, want 2/2", nc.UploadCompressionType, nc.DownloadCompressionType)
+	}
+}
+
+func TestApplyCompressionSettingsDisableRestoresLZ4(t *testing.T) {
+	_, serverPath, nodePath := writeCompressionFixtures(t)
+	enable := CompressionSettingsUpdate{DictEnabled: boolPtr(true), Level: intPtr(9), LongEnabled: boolPtr(false)}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, enable); err != nil {
+		t.Fatal(err)
+	}
+	nc, _ := config.LoadClientConfig(nodePath)
+	if nc.UploadCompressionType != 1 || nc.DownloadCompressionType != 1 {
+		t.Fatalf("types after enable: upload %d download %d, want 1/1", nc.UploadCompressionType, nc.DownloadCompressionType)
+	}
+	disable := CompressionSettingsUpdate{DictEnabled: boolPtr(false)}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, disable); err != nil {
+		t.Fatal(err)
+	}
+	nc, _ = config.LoadClientConfig(nodePath)
+	if nc.ZSTDDictEnabled {
+		t.Fatal("disable left dicts enabled on the node")
+	}
+	if nc.UploadCompressionType != 2 || nc.DownloadCompressionType != 2 {
+		t.Fatalf("types after disable: upload %d download %d, want 2/2", nc.UploadCompressionType, nc.DownloadCompressionType)
+	}
+	// A hand-set custom type is replaced by the derived value: the
+	// control owns the five keys as one bundle, and the previous
+	// file is preserved as .bak for recovery.
+	nodeBefore, _ := os.ReadFile(nodePath)
+	custom := strings.Replace(string(nodeBefore), "DOWNLOAD_COMPRESSION_TYPE = 2", "DOWNLOAD_COMPRESSION_TYPE = 3", 1)
+	if err := os.WriteFile(nodePath, []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, disable); err != nil {
+		t.Fatal(err)
+	}
+	nc, _ = config.LoadClientConfig(nodePath)
+	if nc.DownloadCompressionType != 2 {
+		t.Fatalf("hand-set custom type survived disable: %d, want 2", nc.DownloadCompressionType)
+	}
+}
+
+func TestApplyCompressionSettingsServerMaskGuard(t *testing.T) {
+	_, serverPath, nodePath := writeCompressionFixtures(t)
+	// Restrict the server's SUPPORTED lists to LZ4 only: enabling
+	// dictionaries must be refused, with both files untouched.
+	restricted := "# Server fixture: comments and unrelated keys must survive.\n" +
+		"UDP_PORT = 53\n" +
+		"DOMAIN = [\"tunnel.example.invalid\"]\n" +
+		"SUPPORTED_UPLOAD_COMPRESSION_TYPES = [2]\n" +
+		"SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [2]\n" +
+		"ZSTD_DICT_ENABLED = false # keep this comment\n" +
+		"ZSTD_LEVEL = 0\n" +
+		"ZSTD_LONG_ENABLED = false\n" +
+		"# Trailing comment.\n"
+	if err := os.WriteFile(serverPath, []byte(restricted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadServerConfig(serverPath); err != nil {
+		t.Fatalf("restricted server fixture does not load: %v", err)
+	}
+	serverBefore, _ := os.ReadFile(serverPath)
+	nodeBefore, _ := os.ReadFile(nodePath)
+	enable := CompressionSettingsUpdate{DictEnabled: boolPtr(true), Level: intPtr(9), LongEnabled: boolPtr(false)}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, enable); err == nil {
+		t.Fatal("enable with a server mask excluding ZSTD must be refused")
+	}
+	if got, _ := os.ReadFile(serverPath); string(got) != string(serverBefore) {
+		t.Fatalf("server file changed after refused enable:\n%s", got)
+	}
+	if got, _ := os.ReadFile(nodePath); string(got) != string(nodeBefore) {
+		t.Fatal("node file changed after refused enable")
+	}
+	if _, err := os.Stat(serverPath + ".bak"); !os.IsNotExist(err) {
+		t.Fatal("a .bak was written for a refused edit")
+	}
+	// Disabling under the same mask is fine: the node requests LZ4,
+	// which the mask admits.
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, CompressionSettingsUpdate{DictEnabled: boolPtr(false)}); err != nil {
+		t.Fatalf("disable under a restricted mask must succeed: %v", err)
+	}
+	// Explicit lists admitting ZSTD allow the enable.
+	admitting := strings.Replace(restricted, "[2]", "[0, 1, 2, 3]", 2)
+	if err := os.WriteFile(serverPath, []byte(admitting), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, enable); err != nil {
+		t.Fatalf("enable with a mask admitting ZSTD must succeed: %v", err)
+	}
+	nc, _ := config.LoadClientConfig(nodePath)
+	if nc.UploadCompressionType != 1 || nc.DownloadCompressionType != 1 {
+		t.Fatalf("types after guarded enable: upload %d download %d, want 1/1", nc.UploadCompressionType, nc.DownloadCompressionType)
 	}
 }
 
@@ -291,4 +475,29 @@ func TestApplyCompressionSettingsBadEditNeverReplaces(t *testing.T) {
 		t.Fatal("a .bak was written for a rejected edit")
 	}
 	_ = serverBefore
+
+	// Node-side failure: a duplicate type key makes the node file
+	// itself fail to load, so neither file is installed.
+	if err := os.WriteFile(serverPath, serverBefore, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dupNode := "DOMAINS = [\"tunnel.example.invalid\"]\n" +
+		"ENCRYPTION_KEY = \"00112233445566778899aabbccddeeff\"\n" +
+		"DOWNLOAD_COMPRESSION_TYPE = 2\nDOWNLOAD_COMPRESSION_TYPE = 1\n" +
+		"ZSTD_DICT_ENABLED = false\nZSTD_LEVEL = 3\nZSTD_LONG_ENABLED = false\n"
+	if err := os.WriteFile(nodePath, []byte(dupNode), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, CompressionSettingsUpdate{DictEnabled: boolPtr(true)}); err == nil {
+		t.Fatal("duplicate node type key must be rejected")
+	}
+	if got, _ := os.ReadFile(nodePath); string(got) != dupNode {
+		t.Fatalf("duplicate-key node file was modified:\n%s", got)
+	}
+	if got, _ := os.ReadFile(serverPath); string(got) != string(serverBefore) {
+		t.Fatal("server file changed after a rejected node edit")
+	}
+	if _, err := os.Stat(nodePath + ".bak"); !os.IsNotExist(err) {
+		t.Fatal("a .bak was written for a rejected node edit")
+	}
 }

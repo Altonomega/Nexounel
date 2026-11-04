@@ -154,7 +154,7 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <label for="zstd-level">Zstd level (0&ndash;22, both sides)</label>
 <input type="number" id="zstd-level" name="zstd_level" value="{{if .Content.Compression.Server.Available}}{{.Content.Compression.Server.Level}}{{else}}0{{end}}" min="0" max="22">
 <label><input type="checkbox" name="long_enabled" value="yes"{{if .Content.Compression.Server.LongEnabled}} checked{{end}}> Enable long window (both sides)</label>
-<p class="muted">Writes only the three ZSTD_* lines in each config file (previous versions kept as .bak). The setting takes effect only after restarting the server and the node service.</p>
+<p class="muted">Writes only the three ZSTD_* lines in the server config, and the ZSTD_* lines plus the negotiated compression-type lines in the node config (previous versions kept as .bak). Enabling dictionaries also switches the node compression types to ZSTD; disabling switches them back to LZ4. The setting takes effect only after restarting the server and the node service.</p>
 <label><input type="checkbox" name="confirm" value="yes" required> I understand both sides must match and both processes must restart.</label>
 <p><button type="submit">Apply compression settings</button></p>
 </form></div>
