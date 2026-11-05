@@ -7,31 +7,48 @@ import (
 )
 
 const panelCSS = `
-body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#f4f5f7;color:#1c2333}
-header{background:#1c2333;color:#fff;padding:14px 22px}
-header h1{font-size:18px;margin:0}
-nav{padding:10px 22px;background:#fff;border-bottom:1px solid #ddd}
-nav a{margin-right:16px;color:#2456c4;text-decoration:none}
-nav a:hover{text-decoration:underline}
-main{max-width:960px;margin:0 auto;padding:22px}
-h2{font-size:20px}
-table{border-collapse:collapse;width:100%;background:#fff}
-th,td{border:1px solid #ddd;padding:8px 10px;text-align:left;font-size:14px}
-th{background:#eef1f6}
-code{background:#eef1f6;padding:2px 5px;border-radius:3px}
-input[type=text],input[type=password],input[type=number],textarea,select{width:100%;max-width:480px;padding:8px;border:1px solid #bbb;border-radius:4px;box-sizing:border-box}
-label{display:block;margin:12px 0 4px;font-weight:600}
-button,.btn{background:#2456c4;color:#fff;border:0;padding:9px 18px;border-radius:4px;cursor:pointer;font-size:15px;text-decoration:none;display:inline-block}
-button:hover,.btn:hover{background:#1a44a0}
-.error{background:#fdecea;border:1px solid #e0a8a8;padding:12px;border-radius:4px}
-.ok{background:#e6f4ea;border:1px solid #9ed3a8;padding:12px;border-radius:4px}
-.warn{background:#fff7e0;border:1px solid #e5cf8a;padding:12px;border-radius:4px}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0;background:#0b0f14;color:#e6edf3;line-height:1.5;animation:pageIn .35s ease both}
+@keyframes pageIn{from{opacity:0}to{opacity:1}}
+header{background:linear-gradient(180deg,#10161d,#0d1218);border-bottom:1px solid #1f2a38;padding:16px 24px}
+header h1{font-size:19px;margin:0;letter-spacing:.4px}
+header h1::after{content:"";display:block;height:2px;width:64px;margin-top:8px;background:linear-gradient(90deg,#38bdf8,#2dd4bf);border-radius:2px}
+nav{padding:10px 24px;background:#10161d;border-bottom:1px solid #1f2a38;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+nav a{color:#9fb0c3;text-decoration:none;padding:6px 12px;border-radius:999px;font-size:14px}
+nav a:hover{color:#e6edf3;background:#1b2534}
+nav form{margin-left:auto}
+main{max-width:1080px;margin:0 auto;padding:24px}
+h2{font-size:22px;margin:4px 0 16px;color:#f0f6fc}
+h3{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#8fa3b8;margin:0 0 12px}
+a{color:#7dd3fc}
+a:hover{color:#bae6fd}
+.card{background:linear-gradient(180deg,#151d29,#121924);border:1px solid #26303f;border-radius:12px;padding:18px 20px;margin:16px 0;box-shadow:0 4px 18px rgba(0,0,0,.35);overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid #232d3d;padding:9px 10px;text-align:left;vertical-align:top}
+th{color:#8fa3b8;font-size:12px;text-transform:uppercase;letter-spacing:.06em;background:#18202d}
+tr:hover td{background:#1b2534}
+tr:last-child td{border-bottom:0}
+code{background:#1c2534;padding:2px 6px;border-radius:4px;font-size:13px;color:#a5d8ff}
+input[type=text],input[type=password],input[type=number],textarea,select{width:100%;max-width:480px;padding:9px 10px;border:1px solid #2a3442;border-radius:8px;background:#0d1319;color:#e6edf3;font-size:14px}
+input:focus,textarea:focus,select:focus{outline:none;border-color:#38bdf8;box-shadow:0 0 0 3px rgba(56,189,248,.18)}
+label{display:block;margin:14px 0 5px;font-weight:600;color:#c6d2df}
+button,.btn{background:#0284c7;color:#fff;border:0;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{background:#0369a1}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.badge-up{color:#34d399;background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35)}
+.badge-down{color:#f87171;background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35)}
+.badge-warn{color:#fbbf24;background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35)}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:#34d399;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(52,211,153,.45)}50%{box-shadow:0 0 0 5px rgba(52,211,153,0)}}
+.error{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.4);color:#fecaca;padding:12px 14px;border-radius:8px}
+.ok{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;padding:12px 14px;border-radius:8px}
+.warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.4);color:#fde68a;padding:12px 14px;border-radius:8px}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-pre{background:#1c2333;color:#e8ecf4;padding:14px;border-radius:4px;overflow:auto;font-size:13px}
-.card{background:#fff;border:1px solid #ddd;border-radius:6px;padding:16px;margin:14px 0}
-footer{padding:16px 22px;color:#666;font-size:13px}
-.muted{color:#666;font-size:13px}
+pre{background:#0d1117;color:#dbe4ee;padding:14px;border:1px solid #232d3d;border-radius:8px;overflow:auto;font-size:13px}
+footer{padding:18px 24px;color:#6b7a8d;font-size:13px;text-align:center}
+.muted{color:#8b98a9;font-size:13px}
 form.inline{display:inline}
+@media (max-width:640px){main{padding:16px}header,nav{padding-left:14px;padding-right:14px}.card{padding:14px}}
 `
 
 const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
@@ -88,7 +105,7 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <input type="text" id="showntoken" readonly value="{{.Content.ShownToken}}">
 <p class="muted">Run the node in enroll mode with this token (<code>--enroll</code> with <code>--join-token</code>, <code>--join-token-file</code>, or stdin; prefer the file or stdin so the token stays out of shell history). The token is single-use: it enrolls exactly one node, then burns. A panel restart invalidates outstanding tokens. The token value is never logged.</p></div>{{end}}
 <div class="card"><h3>Tunnel / server health</h3>
-{{if .Content.Health.Up}}<p>Server: <strong>up</strong></p>{{else}}<p>Server: <strong>down</strong>{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}</p>{{end}}
+{{if .Content.Health.Up}}<p>Metrics endpoint: <span class="badge badge-up"><span class="dot"></span>reachable</span></p>{{else}}<p>Metrics/health endpoint unreachable <span class="badge badge-down">unavailable</span>{{if .Content.Health.Error}} <span class="muted">({{.Content.Health.Error}})</span>{{end}}</p>{{end}}
 {{with .Content.Health.Details}}<p>Status: {{.Status}} &middot; Uptime: {{.UptimeSeconds}} seconds</p>
 {{if .Warnings}}<p>Warnings:</p><ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>{{end}}
 <p>Transports: UDP {{if .Transports.UDPUp}}up{{else}}down{{end}} &middot; TCP {{if .Transports.TCPUp}}up{{else}}down{{end}} &middot; DoT {{if .Transports.DoTUp}}up{{else}}down{{end}} &middot; DoH {{if .Transports.DoHUp}}up{{else}}down{{end}}</p>
@@ -107,7 +124,7 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 {{if .Content.Mesh.Available}}
 <p>Term: <strong>{{.Content.Mesh.Term}}</strong>{{if .Content.Mesh.TermDegraded}} (degraded){{end}} &middot; Table version: {{.Content.Mesh.Version}} &middot; Chief: <strong>{{if .Content.Mesh.ChiefID}}{{.Content.Mesh.ChiefID}}{{else}}none{{end}}</strong> &middot; Snapshot signing: {{if .Content.Mesh.SnapshotSigning}}enabled{{else}}disabled (unsigned tables; degraded derivation unavailable){{end}}</p>
 <p class="muted">Snapshot generated at {{.Content.Mesh.GeneratedAt.Format "2006-01-02 15:04:05 MST"}} &middot; Control socket: configured and reachable</p>
-{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Capacity (B/s)</th><th>Weight</th><th>Loss</th><th>Leg RTT (ms)</th><th>Leg</th><th>Streams</th><th>Forward ports</th><th>Config ver.</th><th>Control stream</th><th>Last heartbeat</th><th>Last ack</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.State}}</td><td>{{printf "%.0f" .CapacityBps}}</td><td>{{printf "%.3f" .Weight}}</td><td>{{printf "%.3f" .Loss}}</td><td>{{printf "%.1f" .LegRTTMs}}</td><td>{{if .LegOK}}ok{{else}}down{{end}}</td><td>{{.ActiveStreams}}</td><td>{{.ForwardPortsBound}}</td><td>{{.ConfigVersion}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td><td>{{if .LastAckFor}}{{.LastAckFor}}{{if .LastAckError}}: {{.LastAckError}}{{end}}{{else}}&mdash;{{end}}</td></tr>{{end}}</table>{{else}}<p>No members in the enforced table and no heartbeats recorded.</p>{{end}}
+{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Capacity (B/s)</th><th>Weight</th><th>Loss</th><th>Leg RTT (ms)</th><th>Leg</th><th>Streams</th><th>Forward ports</th><th>Config ver.</th><th>Control stream</th><th>Last heartbeat</th><th>Last ack</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.State}}</td><td>{{printf "%.0f" .CapacityBps}}</td><td>{{printf "%.3f" .Weight}}</td><td>{{printf "%.3f" .Loss}}</td><td>{{printf "%.1f" .LegRTTMs}}</td><td>{{if .LegOK}}<span class="badge badge-up"><span class="dot"></span>ok</span>{{else}}<span class="badge badge-down">down</span>{{end}}</td><td>{{.ActiveStreams}}</td><td>{{.ForwardPortsBound}}</td><td>{{.ConfigVersion}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td><td>{{if .LastAckFor}}{{.LastAckFor}}{{if .LastAckError}}: {{.LastAckError}}{{end}}{{else}}&mdash;{{end}}</td></tr>{{end}}</table>{{else}}<p>No members in the enforced table and no heartbeats recorded.</p>{{end}}
 <p class="muted">Weights are capacity shares: zero means the member takes no new streams (reserve, suspect, down, or no capacity reported yet). A member shown SUSPECT or DOWN while its sessions still appear above means heartbeats stopped, not that the node is healthy — the control stream is wedged. An ack error means a config push or rotation order was received but not applied; an absent ack means the order was never acknowledged. Snapshot signing disabled means nodes hold no verified snapshot and cannot derive a degraded chief if the mother link drops.</p>
 {{else}}<p>{{.Content.Mesh.Note}}</p>{{end}}</div>
 <div class="card"><h3>Join tokens</h3>
