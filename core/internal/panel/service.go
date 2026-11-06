@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -201,9 +202,14 @@ type MeshMemberView struct {
 	ActiveStreams      int            `json:"active_streams"`
 	ForwardPortsBound  int            `json:"forward_ports_bound"`
 	ConfigVersion      uint64         `json:"config_version"`
-	StreamConnected    bool           `json:"stream_connected"`
-	LastAckFor         string         `json:"last_ack_for,omitempty"`
-	LastAckError       string         `json:"last_ack_error,omitempty"`
+	// ResolverUsable/ResolverRejected are the aggregate counts from
+	// the member's last heartbeat (the panel already fetches them
+	// via the control socket; they were simply not surfaced).
+	ResolverUsable   int    `json:"resolver_usable"`
+	ResolverRejected int    `json:"resolver_rejected"`
+	StreamConnected  bool   `json:"stream_connected"`
+	LastAckFor       string `json:"last_ack_for,omitempty"`
+	LastAckError     string `json:"last_ack_error,omitempty"`
 }
 
 // MeshView is the mesh state for display: the enforced membership
@@ -273,6 +279,8 @@ func meshViews(snap control.MeshSnapshot, state ControlSocketState) MeshView {
 		v.ActiveStreams = hb.ActiveStreams
 		v.ForwardPortsBound = hb.ForwardPortsBound
 		v.ConfigVersion = hb.ConfigVersion
+		v.ResolverUsable = hb.ResolverUsable
+		v.ResolverRejected = hb.ResolverRejected
 		v.StreamConnected = hb.StreamConnected
 		v.LastAckFor = hb.LastAckFor
 		v.LastAckError = hb.LastAckError
@@ -423,6 +431,182 @@ func loadCompressionStatus(serverConfigPath, nodeConfigPath string) CompressionS
 	return status
 }
 
+// TopologyNode is one node in the 3D topology view: the mesh member's
+// live facts plus its display status and its position in the scene.
+// Positions are fixed presets by index (up to 6 nodes in the scene);
+// further nodes are listed below the scene (InScene=false). The
+// status is derived only from data the dashboard already loads —
+// never invented.
+type TopologyNode struct {
+	ID                 string  `json:"id"`
+	StatusClass        string  `json:"status_class"` // "healthy" | "degraded" | "down"
+	StatusLabel        string  `json:"status_label"` // "Healthy" | "Degraded" | "Down" | "Joining"
+	IsChief            bool    `json:"is_chief"`
+	CapacityBps        float64 `json:"capacity_bps"`
+	Loss               float64 `json:"loss"` // fraction 0..1, as reported
+	LossPercent        float64 `json:"loss_percent"`
+	ActiveStreams      int     `json:"active_streams"`
+	ResolverUsable     int     `json:"resolver_usable"`
+	ResolverRejected   int     `json:"resolver_rejected"`
+	LegRTTMs           float64 `json:"leg_rtt_ms"`
+	LegOK              bool    `json:"leg_ok"`
+	ForwardPortsBound  int     `json:"forward_ports_bound"`
+	LastSeenAgoSeconds int64   `json:"last_seen_ago_seconds"`
+	PosClass           string  `json:"pos_class"`
+	X                  int     `json:"x"` // SVG link endpoint, 0..100
+	Y                  int     `json:"y"` // SVG link endpoint, 0..100
+	InScene            bool    `json:"in_scene"`
+}
+
+// TopologyView is the whole system at a glance for the 3D topology:
+// the mother server plus every known node, and a plain-language
+// summary. It is built only from data the dashboard already loads
+// (health, sessions, mesh) — no new backend call.
+type TopologyView struct {
+	MotherUp       bool           `json:"mother_up"`
+	MotherSessions int            `json:"mother_sessions"`
+	MotherUptime   uint64         `json:"mother_uptime_seconds"`
+	Nodes          []TopologyNode `json:"nodes"`
+	NodesUp        int            `json:"nodes_up"`
+	NodesTotal     int            `json:"nodes_total"`
+	// BeyondScene counts nodes rendered as a list below the scene
+	// (the scene holds at most 6).
+	BeyondScene   int    `json:"beyond_scene"`
+	SummaryClass  string `json:"summary_class"` // "healthy" | "degraded" | "down"
+	SummaryText   string `json:"summary_text"`
+	MeshAvailable bool   `json:"mesh_available"`
+	MeshNote      string `json:"mesh_note,omitempty"`
+}
+
+// topologyPositions are the fixed scene presets (index -> CSS class
+// and SVG link endpoint, both in the same 0..100 coordinate space as
+// the scene, so the line always meets its node). The mother sits at
+// (50, 50); nodes fan out around it.
+var topologyPositions = []struct {
+	class string
+	x, y  int
+}{
+	{"topo-pos-0", 86, 50},
+	{"topo-pos-1", 72, 16},
+	{"topo-pos-2", 72, 84},
+	{"topo-pos-3", 14, 50},
+	{"topo-pos-4", 28, 16},
+	{"topo-pos-5", 28, 84},
+}
+
+// topologyNodeStatus maps a mesh member to a display status. A member
+// is healthy only when it is ACTIVE with a live leg, a fresh
+// heartbeat, and low loss; anything else is degraded or down. An
+// unknown or missing state is degraded, never claimed healthy.
+func topologyNodeStatus(m MeshMemberView) (class, label string) {
+	switch m.State {
+	case mesh.StateDown, mesh.StateRevoked:
+		return "down", "Down"
+	case mesh.StateSuspect:
+		return "degraded", "Degraded"
+	case mesh.StatePending:
+		return "degraded", "Joining"
+	case mesh.StateActive:
+		// Healthy only if the liveness checks below pass.
+	default:
+		return "degraded", "Degraded"
+	}
+	if m.LastSeen.IsZero() {
+		return "degraded", "Degraded"
+	}
+	if !m.LegOK {
+		return "degraded", "Degraded"
+	}
+	if m.LastSeenAgoSeconds > 120 {
+		return "degraded", "Degraded"
+	}
+	if m.Loss >= 0.5 {
+		return "degraded", "Degraded"
+	}
+	return "healthy", "Healthy"
+}
+
+// topologyView builds the 3D topology from the dashboard's health,
+// sessions, and mesh. It never fails: an unavailable mesh still
+// renders the mother with an explicit note, and zero nodes render
+// as an empty network with a hint to add the first node.
+func topologyView(health ServerHealth, sessions []SessionView, meshView MeshView) TopologyView {
+	view := TopologyView{
+		MotherUp:       health.Up,
+		MotherSessions: len(sessions),
+		MeshAvailable:  meshView.Available,
+		MeshNote:       meshView.Note,
+		Nodes:          []TopologyNode{},
+	}
+	if health.Details != nil {
+		view.MotherUptime = health.Details.UptimeSeconds
+	}
+	for i, m := range meshView.Members {
+		class, label := topologyNodeStatus(m)
+		node := TopologyNode{
+			ID: m.ID, StatusClass: class, StatusLabel: label,
+			IsChief:     m.ID == meshView.ChiefID && meshView.ChiefID != "",
+			CapacityBps: m.CapacityBps, Loss: m.Loss, LossPercent: m.Loss * 100,
+			ActiveStreams: m.ActiveStreams, ResolverUsable: m.ResolverUsable,
+			ResolverRejected: m.ResolverRejected, LegRTTMs: m.LegRTTMs,
+			LegOK: m.LegOK, ForwardPortsBound: m.ForwardPortsBound,
+			LastSeenAgoSeconds: m.LastSeenAgoSeconds,
+		}
+		if i < len(topologyPositions) {
+			node.PosClass = topologyPositions[i].class
+			node.X, node.Y = topologyPositions[i].x, topologyPositions[i].y
+			node.InScene = true
+		} else {
+			node.PosClass = "topo-pos-more"
+			node.InScene = false
+		}
+		view.Nodes = append(view.Nodes, node)
+		if class == "healthy" {
+			view.NodesUp++
+		}
+		if !node.InScene {
+			view.BeyondScene++
+		}
+	}
+	view.NodesTotal = len(view.Nodes)
+
+	// Plain-language summary: the user should know in one line
+	// whether everything is OK and, if not, what is wrong.
+	switch {
+	case !health.Up:
+		view.SummaryClass = "down"
+		view.SummaryText = "Mother server is down — the tunnel is not reachable."
+	case view.NodesTotal == 0 && !meshView.Available:
+		view.SummaryClass = "degraded"
+		view.SummaryText = "Mother is up, but node status is unavailable — the mesh control socket is not reachable."
+	case view.NodesTotal == 0:
+		view.SummaryClass = "degraded"
+		view.SummaryText = "Mother is up, but no nodes are connected yet — add your first node with the Setup wizard."
+	default:
+		down, degraded := 0, 0
+		for _, n := range view.Nodes {
+			switch n.StatusClass {
+			case "down":
+				down++
+			case "degraded":
+				degraded++
+			}
+		}
+		switch {
+		case down > 0:
+			view.SummaryClass = "down"
+			view.SummaryText = fmt.Sprintf("%d of %d node(s) down — check the node below. Mother is up, %d session(s) active.", down, view.NodesTotal, view.MotherSessions)
+		case degraded > 0:
+			view.SummaryClass = "degraded"
+			view.SummaryText = fmt.Sprintf("%d of %d node(s) degraded — check the node below. Mother is up, %d session(s) active.", degraded, view.NodesTotal, view.MotherSessions)
+		default:
+			view.SummaryClass = "healthy"
+			view.SummaryText = fmt.Sprintf("All systems healthy — mother up, %d node(s) connected, %d active session(s).", view.NodesTotal, view.MotherSessions)
+		}
+	}
+	return view
+}
+
 // loadDashboard gathers every dashboard section from the shared service
 // functions. It never fails: every unobservable section degrades to an
 // explicit unavailable state in its own field.
@@ -431,12 +615,14 @@ func (s *Server) loadDashboard(ctx context.Context) statusContent {
 	nodes, regErr := ListRegistryNodes(s.cfg.RegistryFile)
 	resolver := LoadNodeResolverHealth(s.cfg.NodeConfig)
 	sessions, ctrl := s.liveSessions(ctx)
+	meshView := s.liveMesh(ctx)
 	content := statusContent{
 		Health: health, Nodes: nodes, Resolver: resolver,
 		Control: ctrl, Sessions: sessions,
 		Compression:  loadCompressionStatus(s.cfg.ServerConfig, s.cfg.NodeConfig),
 		ConfigFiles:  s.configFileState(),
-		Mesh:         s.liveMesh(ctx),
+		Mesh:         meshView,
+		Topology:     topologyView(health, sessions, meshView),
 		PendingJoins: s.pendingJoinViews(ctx),
 	}
 	if regErr != nil {

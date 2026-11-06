@@ -134,6 +134,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch s.subPath(r.URL.Path) {
 	case "/", "":
 		s.requireAuth(http.HandlerFunc(s.handleRoot)).ServeHTTP(w, r)
+	case "/panel.css":
+		s.handleStylesheet(w, r)
 	case "/login":
 		s.handleLogin(w, r)
 	case "/logout":
@@ -183,6 +185,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.cfg.WebPath+"/status", http.StatusFound)
+}
+
+// handleStylesheet serves the panel CSS as an external same-origin
+// stylesheet. The CSP is `default-src 'self'`, which blocks inline
+// <style> elements but allows same-origin stylesheets, so the CSS
+// must not be inlined (an inline block renders as plain unstyled
+// HTML). The route is under the secret web path — the same access
+// control as the login page — and needs no session: the login page
+// must be styled before the user authenticates.
+func (s *Server) handleStylesheet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	_, _ = w.Write([]byte(panelCSS))
 }
 
 const sessionCookieName = "nexounel_panel_session"
@@ -357,6 +378,7 @@ type statusContent struct {
 	Compression  CompressionStatus
 	ConfigFiles  ConfigFileState
 	Mesh         MeshView
+	Topology     TopologyView
 	PendingJoins []PendingJoinView
 
 	// ShownToken carries a freshly issued join token for exactly
