@@ -422,9 +422,39 @@ func (s *Stream_client) finalizeAfterARQClose() {
 
 func (s *Stream_client) OnARQClosed(reason string) {
 	if s != nil && s.client != nil {
+		// Observability: a user-visible stream death (e.g. a VLESS stream
+		// dying mid-transfer) was invisible in the node logs — only clean
+		// closes were recorded. Log abnormal closes (anything that is not
+		// a clean handshake/RST-acknowledged close) so the next diagnosis
+		// can see WHEN a stream died and WHY, at the moment it happens.
+		if s.client.log != nil && isAbnormalStreamCloseReason(reason) {
+			s.client.log.Warnf(
+				"\U0001F6A8 <yellow>Stream closed abnormally</yellow> <magenta>|</magenta> <blue>Stream</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Reason</blue>: <cyan>%s</cyan>",
+				s.StreamID,
+				reason,
+			)
+		}
 		s.client.rememberClosedStream(s.StreamID, reason, time.Now())
 	}
 	s.finalizeAfterARQClose()
+}
+
+// isAbnormalStreamCloseReason reports whether an ARQ close reason is an
+// abnormal (non-clean) close. Clean closes are the close handshake, the
+// client local disconnect, and any "… acknowledged" (RST) close; anything
+// else (max retransmissions, write errors, timeouts, …) means the stream
+// died rather than closing cleanly.
+func isAbnormalStreamCloseReason(reason string) bool {
+	if reason == "" {
+		return false
+	}
+	if reason == "close handshake completed" || reason == "client local disconnect completed" {
+		return false
+	}
+	if len(reason) >= len(" acknowledged") && reason[len(reason)-len(" acknowledged"):] == " acknowledged" {
+		return false
+	}
+	return true
 }
 
 // Close gracefully shuts down the stream and releases all resources.

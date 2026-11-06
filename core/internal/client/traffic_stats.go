@@ -58,6 +58,7 @@ func (c *Client) runTrafficStatsReporter(ctx context.Context) {
 	defer ticker.Stop()
 
 	var lastTX, lastRX uint64
+	var lastOffered uint64
 	lastTime := time.Now()
 
 	for {
@@ -67,24 +68,35 @@ func (c *Client) runTrafficStatsReporter(ctx context.Context) {
 		case now := <-ticker.C:
 			currentTX := c.txTotalBytes.Load()
 			currentRX := c.rxTotalBytes.Load()
+			currentOffered := c.offeredQueriesTotal.Load()
 
 			elapsed := now.Sub(lastTime).Seconds()
 			var upSpeed, downSpeed float64
+			var offeredPerSec float64
 			if elapsed > 0 {
 				upSpeed = float64(currentTX-lastTX) / elapsed
 				downSpeed = float64(currentRX-lastRX) / elapsed
+				offeredPerSec = float64(currentOffered-lastOffered) / elapsed
 			}
 
 			lastTX = currentTX
 			lastRX = currentRX
+			lastOffered = currentOffered
 			lastTime = now
 
 			if c.log != nil {
 				lossPM := c.tunnelLossPerMille()
 				activeResolvers := c.balancer.ValidCount()
 				transport := c.activeTransport().String()
+				// Governor observability: the cap the limiter enforces and
+				// how many queries it throttled (cumulative). A field test
+				// reads offered q/s against the cap: when offered would
+				// exceed the cap, throttled must grow and offered must stay
+				// at or below the cap.
+				governorCap := c.queryLimiter.GlobalRate()
+				governorThrottled := c.queryLimiter.GlobalThrottled()
 				c.log.Infof(
-					"\U0001F4CA <cyan>↑</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>↓</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>loss</cyan> <yellow>%.1f%%</yellow> <magenta>|</magenta> <cyan>resolvers</cyan> <yellow>%d</yellow> <magenta>|</magenta> <cyan>transport</cyan> <yellow>%s</yellow> <magenta>|</magenta> <cyan>queues</cyan> <yellow>%d/%d/%d</yellow> <magenta>|</magenta> <cyan>drops</cyan> <yellow>rx=%d tx=%d</yellow> <magenta>|</magenta> <cyan>recoveries</cyan> <yellow>%d</yellow> <magenta>|</magenta> <cyan>stream-fail</cyan> <yellow>dial=%d write=%d</yellow>",
+					"\U0001F4CA <cyan>↑</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>↓</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>loss</cyan> <yellow>%.1f%%</yellow> <magenta>|</magenta> <cyan>resolvers</cyan> <yellow>%d</yellow> <magenta>|</magenta> <cyan>transport</cyan> <yellow>%s</yellow> <magenta>|</magenta> <cyan>queues</cyan> <yellow>%d/%d/%d</yellow> <magenta>|</magenta> <cyan>drops</cyan> <yellow>rx=%d tx=%d</yellow> <magenta>|</magenta> <cyan>recoveries</cyan> <yellow>%d</yellow> <magenta>|</magenta> <cyan>stream-fail</cyan> <yellow>dial=%d write=%d</yellow> <magenta>|</magenta> <cyan>offered</cyan> <yellow>%.0f q/s</yellow> <magenta>|</magenta> <cyan>governor</cyan> <yellow>cap=%.0f throttled=%d</yellow>",
 					formatSpeed(upSpeed),
 					formatBytes(currentTX),
 					formatSpeed(downSpeed),
@@ -96,6 +108,9 @@ func (c *Client) runTrafficStatsReporter(ctx context.Context) {
 					c.rxDroppedPackets.Load(), c.txAdmissionDrops.Load(),
 					c.transportRecoveryCount.Load(),
 					c.streamDialFailures.Load(), c.streamWriteFailures.Load(),
+					offeredPerSec,
+					governorCap,
+					governorThrottled,
 				)
 			}
 		}

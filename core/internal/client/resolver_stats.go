@@ -102,6 +102,7 @@ func (c *Client) noteResolverSend(serverKey string) {
 	if c == nil || serverKey == "" || c.balancer == nil {
 		return
 	}
+	c.offeredQueriesTotal.Add(1)
 	c.balancer.ReportSend(serverKey)
 }
 

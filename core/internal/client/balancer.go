@@ -34,6 +34,12 @@ type Balancer struct {
 	rrCounter  atomic.Uint64
 	rngState   atomic.Uint64
 	version    atomic.Uint64
+	// probationaryCount is the number of resolvers currently in post-rejoin
+	// probation. It is a fast-path guard for the trickle picker: when it is
+	// zero no scan is needed. It is maintained under each resolver's own
+	// stats lock (incremented on probation start, decremented on graduation),
+	// so it stays consistent with the per-resolver probation state.
+	probationaryCount atomic.Int64
 
 	mu       sync.Mutex
 	sources  []*Connection
@@ -46,9 +52,47 @@ type connectionStats struct {
 	acked        uint64
 	rttMicrosSum uint64
 	rttCount     uint64
+	// Probation (post-rejoin) state. probationUntil is zero when the
+	// resolver is not probationary. probationSent/probationAcked count
+	// sends/acks since probation started (the clean post-rejoin loss
+	// signal, free of the seed); probationLastPick is the last time this
+	// resolver was picked while probationary (the rate-cap clock).
+	probationUntil    time.Time
+	probationSent     uint64
+	probationAcked    uint64
+	probationLastPick time.Time
 }
 
 const connectionStatsHalfLifeThreshold = 1000
+
+// Post-rejoin probation: a reactivated resolver is rate-capped and kept out
+// of the preferred/duplicate slots until it proves itself, so a just-rejoined
+// resolver cannot be stampeded the way the 17:20 spike showed (a rejoined
+// resolver seeded with a fake 20% loss looked like the best score in a
+// degraded pool and took >=30 sends in <=2 s, then re-pruned in 1-15 s).
+const (
+	// probationDuration is the maximum wall-clock probation after reactivation.
+	// A resolver graduates earlier once it sustains enough sends at low loss;
+	// after this long it graduates regardless (by then its seed has washed
+	// out into real measurements, so its score is honest).
+	probationDuration = 60 * time.Second
+	// probationGraduationSends is the number of post-rejoin sends a
+	// probationary resolver must sustain before graduating early.
+	probationGraduationSends = 50
+	// probationGraduationMaxLossPerMille is the maximum post-rejoin loss
+	// (parts per 1000) for early graduation: <20% loss over the window.
+	probationGraduationMaxLossPerMille = 200
+	// probationMinPickInterval caps a probationary resolver to at most one
+	// pick per interval (<=2 q/s), enforced by the trickle picker. This is
+	// the rate cap that stops the rejoin stampede.
+	probationMinPickInterval = 500 * time.Millisecond
+	// probationSeedSent/probationSeedAcked seed a rejoined resolver as BAD
+	// (80% loss) instead of good, so it starts at the BACK of the selection
+	// queue, not the front. The old 10/8 seed (fake 20% loss) was the best
+	// score in a degraded pool and caused the stampede.
+	probationSeedSent  = 100
+	probationSeedAcked = 20
+)
 
 type balancerSnapshot struct {
 	version     uint64
@@ -256,8 +300,15 @@ func (b *Balancer) ReportSend(serverKey string) {
 	if stats := b.statsForKey(serverKey); stats != nil {
 		stats.mu.Lock()
 		stats.sent++
+		if !stats.probationUntil.IsZero() {
+			stats.probationSent++
+		}
 		stats.applyHalfLifeLocked()
+		graduated := stats.maybeGraduateProbationLocked(time.Now())
 		stats.mu.Unlock()
+		if graduated {
+			b.probationaryCount.Add(-1)
+		}
 	}
 }
 
@@ -269,12 +320,19 @@ func (b *Balancer) ReportSuccess(serverKey string, rtt time.Duration) {
 
 	stats.mu.Lock()
 	stats.acked++
+	if !stats.probationUntil.IsZero() {
+		stats.probationAcked++
+	}
 	if rtt > 0 {
 		stats.rttMicrosSum += uint64(rtt / time.Microsecond)
 		stats.rttCount++
 	}
 	stats.applyHalfLifeLocked()
+	graduated := stats.maybeGraduateProbationLocked(time.Now())
 	stats.mu.Unlock()
+	if graduated {
+		b.probationaryCount.Add(-1)
+	}
 }
 
 func (b *Balancer) ResetServerStats(serverKey string) {
@@ -284,29 +342,212 @@ func (b *Balancer) ResetServerStats(serverKey string) {
 	}
 
 	stats.mu.Lock()
+	wasProbationary := !stats.probationUntil.IsZero()
 	stats.sent = 0
 	stats.acked = 0
 	stats.rttMicrosSum = 0
 	stats.rttCount = 0
+	stats.probationUntil = time.Time{}
+	stats.probationSent = 0
+	stats.probationAcked = 0
+	stats.probationLastPick = time.Time{}
 	stats.mu.Unlock()
+	if wasProbationary {
+		b.probationaryCount.Add(-1)
+	}
 }
 
-// SeedConservativeStats initialises a re-activated resolver with a moderate
-// loss score so the balancer does not flood it before it has proven reliability.
-// Score = (10-8)*1000/10 = 200, below neutral (500) but not as good as healthy
-// peers — traffic is directed at it gradually as its real delivery rate improves.
-func (b *Balancer) SeedConservativeStats(serverKey string) {
+// SeedProbationaryStats initialises a re-activated resolver as BAD and
+// starts its post-rejoin probation. The seed is sent=100/acked=20 (80%
+// loss), so the resolver starts at the BACK of the selection queue — the
+// old 10/8 seed (fake 20% loss) was the best score in a degraded pool and
+// caused the rejoin stampede. Probation rate-caps it (at most one pick per
+// probationMinPickInterval, via the trickle picker) and keeps it out of the
+// preferred/duplicate slots until it sustains probationGraduationSends at
+// under probationGraduationMaxLossPerMille loss, or probationDuration
+// elapses. Stats were zeroed when the resolver was disabled, so the seed
+// is the only history it carries.
+func (b *Balancer) SeedProbationaryStats(serverKey string) {
 	stats := b.statsForKey(serverKey)
 	if stats == nil {
 		return
 	}
 
 	stats.mu.Lock()
-	stats.sent = 10
-	stats.acked = 8
+	wasProbationary := !stats.probationUntil.IsZero()
+	stats.sent = probationSeedSent
+	stats.acked = probationSeedAcked
 	stats.rttMicrosSum = 0
 	stats.rttCount = 0
+	stats.probationUntil = time.Now().Add(probationDuration)
+	stats.probationSent = 0
+	stats.probationAcked = 0
+	stats.probationLastPick = time.Time{}
 	stats.mu.Unlock()
+	if !wasProbationary {
+		b.probationaryCount.Add(1)
+	}
+}
+
+// SeedConservativeStats is kept as a thin alias for SeedProbationaryStats so
+// existing callers keep working; new code should call SeedProbationaryStats.
+func (b *Balancer) SeedConservativeStats(serverKey string) {
+	b.SeedProbationaryStats(serverKey)
+}
+
+// IsProbationary reports whether the resolver is currently in post-rejoin
+// probation (and the probation window has not yet expired). A resolver whose
+// window expired counts as graduated even if its fields have not been
+// cleared yet (they are cleared lazily on the next send/success/trickle).
+func (b *Balancer) IsProbationary(serverKey string) bool {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return false
+	}
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
+	return !stats.probationUntil.IsZero() && time.Now().Before(stats.probationUntil)
+}
+
+// ProbationaryTricklePick returns a probationary resolver that is due for
+// its rate-capped trickle pick (at most one pick per
+// probationMinPickInterval), choosing the first due one in snapshot order.
+// The rate cap is the mechanism that stops the rejoin stampede: a rejoined
+// resolver can only be picked this way, at most ~2 q/s, and never as a
+// preferred or duplicate target. When a resolver is returned its pick is
+// recorded, so a second call within the interval will not return it again.
+// Expired probations found during the scan are graduated (their counters
+// cleared) so the fast-path count stays accurate. It returns false when no
+// probationary resolver is due.
+func (b *Balancer) ProbationaryTricklePick() (Connection, bool) {
+	if b.probationaryCount.Load() <= 0 {
+		return Connection{}, false
+	}
+	snap := b.snapshot.Load()
+	if snap == nil || len(snap.valid) == 0 {
+		return Connection{}, false
+	}
+	now := time.Now()
+	for _, idx := range snap.valid {
+		stats := statsByIndex(snap, idx)
+		if stats == nil {
+			continue
+		}
+		stats.mu.Lock()
+		if stats.probationUntil.IsZero() {
+			stats.mu.Unlock()
+			continue
+		}
+		// Lazily graduate expired probations so the fast-path count
+		// converges even for resolvers that receive no further sends.
+		// Time-expiry is not a proven graduation, so the counters (the
+		// seed) are left alone and the resolver keeps ranking at the back.
+		if !now.Before(stats.probationUntil) {
+			if stats.graduateProbationLocked() {
+				stats.mu.Unlock()
+				b.probationaryCount.Add(-1)
+			} else {
+				stats.mu.Unlock()
+			}
+			continue
+		}
+		if !stats.probationLastPick.IsZero() && now.Sub(stats.probationLastPick) < probationMinPickInterval {
+			stats.mu.Unlock()
+			continue
+		}
+		stats.probationLastPick = now
+		stats.mu.Unlock()
+		return derefConnection(snap.connections, idx)
+	}
+	return Connection{}, false
+}
+
+// ProbationLossPerMille returns the post-rejoin loss (parts per 1000) over
+// the probation window, and whether the resolver carries probation state.
+// The probation window is the clean post-rejoin loss signal, free of the
+// 80%-loss seed in the main counters. It is what the auto-disable pruner
+// must judge a probationary resolver on: the seed itself meets the pruning
+// criterion (80% loss over 100 sends), so judging the main counters would
+// re-prune the resolver 0–1 s after reactivation, before the trickle ever
+// ran. ok is false when the resolver has no probation state
+// (probationUntil is zero). Note this deliberately ignores the window's
+// expiry: a resolver whose window expired but has not yet been graduated
+// (lazy graduation) still carries only the seed in its main counters, so
+// it is still judged on the probation window until graduation adopts it.
+func (b *Balancer) ProbationLossPerMille(serverKey string) (lossPerMille uint64, sent uint64, ok bool) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return 0, 0, false
+	}
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
+	if stats.probationUntil.IsZero() {
+		return 0, 0, false
+	}
+	sent = stats.probationSent
+	if sent == 0 {
+		return 0, 0, true
+	}
+	if stats.probationAcked >= sent {
+		return 0, sent, true
+	}
+	return (sent - stats.probationAcked) * 1000 / sent, sent, true
+}
+
+// probationLossPerMilleLocked reports the post-rejoin loss (parts per 1000)
+// over the probation window. The caller must hold s.mu.
+func (s *connectionStats) probationLossPerMilleLocked() (uint64, bool) {
+	if s.probationSent == 0 {
+		return 0, false
+	}
+	if s.probationAcked >= s.probationSent {
+		return 0, true
+	}
+	return (s.probationSent - s.probationAcked) * 1000 / s.probationSent, true
+}
+
+// graduateProbationLocked clears probation state. The caller must hold s.mu
+// and must have already decided the resolver graduates. The main counters
+// are ALWAYS reset to the probation window — the resolver's score becomes
+// the loss it actually proved, not the bad seed it started with. This holds
+// for a time-expiry graduation too: leaving the seed would keep the main
+// counters at 80% loss over 100 sends, and the next auto-disable sweep
+// would re-prune the resolver on stale counters before it ever carried real
+// traffic (the 0–1 s re-disable churn). A time-expired resolver that ran a
+// lossy trickle still graduates with its real (lossy) window, so the
+// pruner can act on that evidence if it meets the bar — the adoption does
+// not hide a bad trickle, it only replaces the seed with what was measured.
+// It returns true if the resolver was probationary.
+func (s *connectionStats) graduateProbationLocked() bool {
+	if s.probationUntil.IsZero() {
+		return false
+	}
+	s.sent = s.probationSent
+	s.acked = s.probationAcked
+	s.probationUntil = time.Time{}
+	s.probationSent = 0
+	s.probationAcked = 0
+	s.probationLastPick = time.Time{}
+	return true
+}
+
+// maybeGraduateProbationLocked graduates the resolver when it has proven
+// itself (enough post-rejoin sends at low loss) or when the probation
+// window expired. The caller must hold s.mu. It returns true if the
+// resolver graduated (so the caller decrements the balancer's count).
+func (s *connectionStats) maybeGraduateProbationLocked(now time.Time) bool {
+	if s.probationUntil.IsZero() {
+		return false
+	}
+	if !now.Before(s.probationUntil) {
+		return s.graduateProbationLocked()
+	}
+	if s.probationSent >= probationGraduationSends {
+		if loss, ok := s.probationLossPerMilleLocked(); ok && loss < probationGraduationMaxLossPerMille {
+			return s.graduateProbationLocked()
+		}
+	}
+	return false
 }
 
 func (b *Balancer) GetBestConnection() (Connection, bool) {
@@ -679,9 +920,18 @@ func (b *Balancer) selectLowestScore(snap *balancerSnapshot, count int, scorer f
 	}
 
 	ordered := b.rotatedValidIndices(snap, count)
-	scored := make([]scoredIdx, n)
-	for i, idx := range ordered {
-		scored[i] = scoredIdx{idx: idx, score: scorer(snap, idx), sent: sentByIndex(snap, idx)}
+	scored := make([]scoredIdx, 0, n)
+	for _, idx := range ordered {
+		// Probationary resolvers never take a duplicate slot: they are
+		// re-proving themselves via the rate-capped trickle only.
+		if isProbationaryByIndex(snap, idx) {
+			continue
+		}
+		scored = append(scored, scoredIdx{idx: idx, score: scorer(snap, idx), sent: sentByIndex(snap, idx)})
+	}
+	n = len(scored)
+	if n == 0 {
+		return nil
 	}
 
 	// Simple selection sort for small 'count'. Sort by (score, sent):
@@ -699,6 +949,12 @@ func (b *Balancer) selectLowestScore(snap *balancerSnapshot, count int, scorer f
 		scored[i], scored[minIdx] = scored[minIdx], scored[i]
 	}
 
+	// Clamp to the eligible set: probation filtering can shrink the pool
+	// below the requested count, and returning fewer (never a duplicate
+	// or a zero entry) is the correct answer then.
+	if count > n {
+		count = n
+	}
 	indices := make([]int, count)
 	for i := 0; i < count; i++ {
 		indices[i] = scored[i].idx
@@ -788,6 +1044,11 @@ func (b *Balancer) bestScoredConnection(snap *balancerSnapshot, scorer func(*bal
 	var bestScore uint64
 	var bestSent uint64
 	for _, idx := range ordered {
+		// Probationary resolvers are never the single best pick: they
+		// re-prove themselves via the rate-capped trickle only.
+		if isProbationaryByIndex(snap, idx) {
+			continue
+		}
 		score := scorer(snap, idx)
 		sent := sentByIndex(snap, idx)
 		// Prefer the lowest score; among equal scores prefer the
@@ -812,6 +1073,12 @@ func (b *Balancer) bestScoredConnectionExcluding(snap *balancerSnapshot, scorer 
 	for _, idx := range ordered {
 		conn, ok := derefConnection(snap.connections, idx)
 		if !ok || conn.Key == excludeKey {
+			continue
+		}
+		// Probationary resolvers are never the single best pick (and so
+		// never a stream's preferred resolver): they re-prove themselves
+		// via the rate-capped trickle only.
+		if isProbationaryByIndex(snap, idx) {
 			continue
 		}
 		score := scorer(snap, idx)
@@ -935,6 +1202,11 @@ func (b *Balancer) weightedByMTUConnection(snap *balancerSnapshot) (Connection, 
 	}
 	total := uint64(0)
 	for _, idx := range snap.valid {
+		// Probationary resolvers are never picked by weight either: they
+		// re-prove themselves via the rate-capped trickle only.
+		if isProbationaryByIndex(snap, idx) {
+			continue
+		}
 		total += loadDiscountedWeight(snap, idx)
 	}
 	if total == 0 {
@@ -943,6 +1215,9 @@ func (b *Balancer) weightedByMTUConnection(snap *balancerSnapshot) (Connection, 
 
 	r := b.nextRandom() % total
 	for _, idx := range snap.valid {
+		if isProbationaryByIndex(snap, idx) {
+			continue
+		}
 		w := loadDiscountedWeight(snap, idx)
 		if r < w {
 			return derefConnection(snap.connections, idx)
@@ -1037,6 +1312,21 @@ func statsByIndex(snap *balancerSnapshot, idx int) *connectionStats {
 		return nil
 	}
 	return snap.stats[idx]
+}
+
+// isProbationaryByIndex reports whether the resolver at idx is in post-rejoin
+// probation (and the window has not expired). Probationary resolvers are
+// excluded from the scored selection paths (best pick and duplicate slots)
+// so a just-rejoined resolver can never be hammered again; its only picks
+// come from the rate-capped trickle picker.
+func isProbationaryByIndex(snap *balancerSnapshot, idx int) bool {
+	stats := statsByIndex(snap, idx)
+	if stats == nil {
+		return false
+	}
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
+	return !stats.probationUntil.IsZero() && time.Now().Before(stats.probationUntil)
 }
 
 func (s *connectionStats) snapshot() (sent uint64, acked uint64, rttMicrosSum uint64, rttCount uint64) {

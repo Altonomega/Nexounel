@@ -27,6 +27,7 @@ import (
 	"context"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,6 +38,14 @@ type queryRateLimiter struct {
 
 	mu  sync.Mutex
 	tat map[string]time.Time // GCRA theoretical arrival time per scope key
+	// globalThrottled counts queries that waited because the GLOBAL scope
+	// (the offered-rate governor, GLOBAL_OFFERED_QPS_MAX) was the binding
+	// constraint; globalWaitTotal is the total time those queries waited.
+	// They are the governor's observability: the traffic reporter logs
+	// them so a field test can verify the governor is actually throttling
+	// offered load instead of letting it run past the fleet's knee.
+	globalThrottled atomic.Uint64
+	globalWaitTotal atomic.Int64 // nanoseconds
 }
 
 // newQueryRateLimiter returns nil (no limit) when every scope is off.
@@ -67,6 +76,33 @@ func (l *queryRateLimiter) perTarget() bool {
 	return l != nil && (l.resolver > 0 || l.domain > 0)
 }
 
+// GlobalRate returns the global offered-rate cap in queries per second
+// (0 = the global scope is off).
+func (l *queryRateLimiter) GlobalRate() float64 {
+	if l == nil || l.global <= 0 {
+		return 0
+	}
+	return float64(time.Second) / float64(l.global)
+}
+
+// GlobalThrottled returns how many queries waited because the global scope
+// (the offered-rate governor) was the binding constraint.
+func (l *queryRateLimiter) GlobalThrottled() uint64 {
+	if l == nil {
+		return 0
+	}
+	return l.globalThrottled.Load()
+}
+
+// GlobalWaitTotal returns the total time queries spent waiting on the
+// global scope (the offered-rate governor).
+func (l *queryRateLimiter) GlobalWaitTotal() time.Duration {
+	if l == nil {
+		return 0
+	}
+	return time.Duration(l.globalWaitTotal.Load())
+}
+
 // schedule returns how long until a query to (resolver, domain) may go out.
 // With book=true the slot is also claimed in every enabled scope.
 func (l *queryRateLimiter) schedule(now time.Time, resolver, domain string, book bool) time.Duration {
@@ -78,6 +114,12 @@ func (l *queryRateLimiter) schedule(now time.Time, resolver, domain string, book
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	sendAt := now
+	// globalBinding tracks whether the GLOBAL scope ("*", the offered-rate
+	// governor) set the latest send time — i.e. whether the governor, not
+	// a per-resolver/per-domain scope, is what throttles this query.
+	// Scopes are scanned global-first, so a tie keeps the global scope
+	// binding (it is at least as restrictive as the tied scope).
+	globalBinding := false
 	for _, s := range scopes {
 		if s.gap == 0 {
 			continue
@@ -85,9 +127,15 @@ func (l *queryRateLimiter) schedule(now time.Time, resolver, domain string, book
 		allow := l.tat[s.key].Add(-time.Duration(l.burst-1) * s.gap)
 		if allow.After(sendAt) {
 			sendAt = allow
+			globalBinding = s.key == "*"
 		}
 	}
+	delay := sendAt.Sub(now)
 	if book {
+		if delay > 0 && globalBinding {
+			l.globalThrottled.Add(1)
+			l.globalWaitTotal.Add(int64(delay))
+		}
 		stretch := 1.0
 		if l.jitter > 0 {
 			stretch += rand.Float64() * l.jitter
@@ -103,7 +151,7 @@ func (l *queryRateLimiter) schedule(now time.Time, resolver, domain string, book
 			l.tat[s.key] = tat.Add(time.Duration(float64(s.gap) * stretch))
 		}
 	}
-	return sendAt.Sub(now)
+	return delay
 }
 
 // delay peeks at the wait for (resolver, domain) without claiming a slot.

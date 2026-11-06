@@ -18,6 +18,11 @@ type resolverHealthState struct {
 	Events           []resolverHealthEvent
 	TimeoutOnlySince time.Time
 	LastSuccessAt    time.Time
+	// ConsecutiveSuccesses counts consecutive successful responses since the
+	// last failure. The timeout-only window is cleared only after
+	// resolverHealthSuccessesToClearWindow consecutive successes, so one
+	// lucky success cannot wipe a mature timeout window.
+	ConsecutiveSuccesses int
 }
 
 type resolverRecheckState struct {
@@ -50,6 +55,47 @@ type resolverAutoDisableCandidate struct {
 	cause          string
 }
 
+// resolverOffenseRecord counts how many times a resolver has been pruned.
+// It survives rejoins (unlike the recheck state, which resets) so repeat
+// offenders get an escalating recheck cooldown instead of flapping on the
+// same short cycle. An offense older than resolverOffenseResetAfter resets
+// the count, so a resolver that was bad once an hour ago is not punished
+// forever for it.
+type resolverOffenseRecord struct {
+	DisableCount   int
+	LastDisabledAt time.Time
+}
+
+// Escalating disable cooldowns for repeat offenders. The old fixed ~5 s
+// recheck delay let a rate-limited resolver rejoin, get hammered, and
+// re-prune on an ~8 s cycle (rejoin flapping). These tiers break the cycle:
+// the first prune waits 30 s, the second 2 min, the third and later 10 min,
+// giving a genuinely rate-limited resolver time to shed its limit state.
+const (
+	resolverOffenseCooldownFirst  = 30 * time.Second
+	resolverOffenseCooldownSecond = 2 * time.Minute
+	resolverOffenseCooldownRepeat = 10 * time.Minute
+	resolverOffenseResetAfter     = time.Hour
+	// resolverMaxDisabledFraction caps the number of resolvers the pruner
+	// may hold disabled at once (as a fraction of the configured pool), so
+	// a bad sweep cannot disable the whole fleet. The three-resolver safety
+	// floor in canDisableResolverConnection still applies on top.
+	resolverMaxDisabledFraction = 5 // percent
+)
+
+// resolverOffenseCooldownFor returns the recheck cooldown for a resolver
+// that has now been pruned disableCount times (1 = first prune).
+func resolverOffenseCooldownFor(disableCount int) time.Duration {
+	switch {
+	case disableCount <= 1:
+		return resolverOffenseCooldownFirst
+	case disableCount == 2:
+		return resolverOffenseCooldownSecond
+	default:
+		return resolverOffenseCooldownRepeat
+	}
+}
+
 // autoDisableLossPerMilleThreshold is the sustained packet-loss rate (parts per
 // 1000) at which a resolver is pruned even without a pure-timeout window. A
 // resolver that answers but drops >=80% of queries is rate-limited, not dead —
@@ -60,6 +106,18 @@ const autoDisableLossPerMilleThreshold = 800
 // autoDisableLossMinObservations is the minimum sends before a loss rate is
 // trusted enough to prune on.
 const autoDisableLossMinObservations = 20
+
+// autoDisableExtremeLossMinObservations is the minimum sends before pruning
+// on TOTAL loss (100%, zero acks). A resolver that answers nothing is
+// pruned much earlier than the sustained-loss threshold, because there is
+// no delivery signal at all to wait for.
+const autoDisableExtremeLossMinObservations = 10
+
+// resolverHealthSuccessesToClearWindow is the number of CONSECUTIVE
+// successes required to clear a resolver's timeout-only window. One lucky
+// success used to wipe the whole window, so a flapping resolver could never
+// accumulate the mature window that triggers pruning.
+const resolverHealthSuccessesToClearWindow = 3
 
 const runtimeDisabledResolverReactivationSuccessThreshold = 2
 
@@ -176,6 +234,9 @@ func (c *Client) initResolverRecheckMeta() {
 	c.resolverHealth = make(map[string]*resolverHealthState, len(c.connections))
 	c.resolverRecheck = make(map[string]resolverRecheckState, len(c.connections))
 	c.runtimeDisabled = make(map[string]resolverDisabledState)
+	if c.resolverOffenseHistory == nil {
+		c.resolverOffenseHistory = make(map[string]*resolverOffenseRecord)
+	}
 
 	for idx := range c.connections {
 		conn := &c.connections[idx]
@@ -297,12 +358,20 @@ func (c *Client) recordResolverHealthEvent(serverKey string, success bool, now t
 		c.resolverHealth[serverKey] = state
 	}
 	if success {
-		state.Events = state.Events[:0]
-		state.TimeoutOnlySince = time.Time{}
+		state.ConsecutiveSuccesses++
 		state.LastSuccessAt = now
+		// One success must not wipe a mature timeout window: only after
+		// several consecutive successes is the resolver credibly
+		// recovered, so a flapping resolver keeps its window until then.
+		if state.ConsecutiveSuccesses >= resolverHealthSuccessesToClearWindow {
+			state.Events = state.Events[:0]
+			state.TimeoutOnlySince = time.Time{}
+			state.ConsecutiveSuccesses = 0
+		}
 		return
 	}
 
+	state.ConsecutiveSuccesses = 0
 	c.insertResolverHealthEventLocked(state, resolverHealthEvent{At: now})
 	if state.TimeoutOnlySince.IsZero() || now.Before(state.TimeoutOnlySince) {
 		state.TimeoutOnlySince = now
@@ -379,6 +448,25 @@ func (c *Client) pruneResolverHealthLocked(state *resolverHealthState, now time.
 		return
 	}
 	state.Events = append(state.Events[:0], state.Events[dropCount:]...)
+}
+
+// resolverPruningLossPerMille reports the loss rate the auto-disable pruner
+// must judge a resolver on. For a probationary resolver it is the
+// probation-window loss (the trickle it actually ran), NOT the main
+// counters — the main counters still carry the 80%-loss seed (100 sent /
+// 20 acked), which itself meets the pruning criterion (≥80% loss over ≥20
+// observations) and would re-prune the resolver 0–1 s after reactivation,
+// before the trickle ever ran. For a non-probationary resolver it is the
+// main counters, unchanged. A probationary resolver with no trickle sends
+// yet reports sent=0 (no evidence), so it is never pruned on the seed.
+func (c *Client) resolverPruningLossPerMille(key string) (lossPerMille uint64, sent uint64, ok bool) {
+	if c == nil || c.balancer == nil || key == "" {
+		return 0, 0, false
+	}
+	if loss, sent, isProb := c.balancer.ProbationLossPerMille(key); isProb {
+		return loss, sent, true
+	}
+	return c.resolverLossPerMille(key)
 }
 
 // resolverLossPerMille reports a resolver's sustained packet-loss rate (parts
@@ -467,9 +555,22 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		// rate-limited state that suffocates a session. It reuses the
 		// same disable + cooldown + recheck + rejoin path, so a
 		// pruned resolver returns automatically once it recovers.
-		if loss, sent, ok := c.resolverLossPerMille(key); ok && sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
-			candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "sustained loss"})
-			seen[key] = struct{}{}
+		// The loss is the PRUNING loss: for a probationary resolver
+		// the trickle window, not the seeded main counters (the seed
+		// itself meets this criterion and would re-prune it before
+		// the trickle ever ran).
+		if loss, sent, ok := c.resolverPruningLossPerMille(key); ok {
+			if sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
+				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "sustained loss"})
+				seen[key] = struct{}{}
+			} else if loss >= 1000 && sent >= autoDisableExtremeLossMinObservations {
+				// Criterion 2b (extreme loss): total loss (100%, zero
+				// acks) is pruned on far fewer observations — a resolver
+				// that answers nothing has no delivery signal to wait
+				// for, so there is no reason to let it burn 20 sends.
+				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "100% loss"})
+				seen[key] = struct{}{}
+			}
 		}
 	}
 	c.resolverHealthMu.Unlock()
@@ -497,7 +598,33 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		}
 	}
 
+	// Cap how many resolvers the pruner may hold disabled at once (5% of
+	// the configured pool, at least 3), so a bad sweep cannot disable the
+	// whole fleet. The three-resolver safety floor in
+	// canDisableResolverConnection still applies on top of this. The cap
+	// is a budget: when it is exhausted the remaining candidates are
+	// skipped this sweep (they are reconsidered on the next sweep, after
+	// some resolvers have recovered and rejoined).
+	maxDisabled := max(3, len(c.connections)*resolverMaxDisabledFraction/100)
+	c.resolverHealthMu.RLock()
+	disabledBudget := maxDisabled - len(c.runtimeDisabled)
+	c.resolverHealthMu.RUnlock()
+	if len(candidates) > 0 && disabledBudget <= 0 {
+		if c.log != nil {
+			c.log.Warnf(
+				"\U0001F6A8 <yellow>Resolver auto-disable cap reached</yellow> <magenta>|</magenta> <blue>Disabled</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Max</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Skipped candidates</blue>: <cyan>%d</cyan>",
+				maxDisabled-disabledBudget,
+				maxDisabled,
+				len(candidates),
+			)
+		}
+		return
+	}
+
 	for _, candidate := range candidates {
+		if disabledBudget <= 0 {
+			break
+		}
 		if !c.canDisableResolverConnection(candidate.key) {
 			continue
 		}
@@ -505,7 +632,9 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		if cause == "" {
 			cause = "100% timeout window"
 		}
-		c.disableResolverConnection(candidate.key, cause)
+		if c.disableResolverConnection(candidate.key, cause) {
+			disabledBudget--
+		}
 	}
 }
 
@@ -538,7 +667,31 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 		return false
 	}
 	now := c.now()
-	nextAt := now.Add(maxDuration(5*time.Second, c.recheckServerInterval()*2))
+
+	// Escalating cooldown for repeat offenders: the recheck delay grows
+	// with the number of times this resolver has been pruned (30 s, then
+	// 2 min, then 10 min), breaking the ~8 s rejoin-flap cycle. The count
+	// survives rejoins; it resets only after an hour without an offense.
+	cooldown := resolverOffenseCooldownFirst
+	c.resolverHealthMu.Lock()
+	if c.resolverOffenseHistory == nil {
+		c.resolverOffenseHistory = make(map[string]*resolverOffenseRecord)
+	}
+	record := c.resolverOffenseHistory[serverKey]
+	if record == nil {
+		record = &resolverOffenseRecord{}
+		c.resolverOffenseHistory[serverKey] = record
+	}
+	if !record.LastDisabledAt.IsZero() && now.Sub(record.LastDisabledAt) > resolverOffenseResetAfter {
+		record.DisableCount = 0
+	}
+	record.DisableCount++
+	record.LastDisabledAt = now
+	cooldown = resolverOffenseCooldownFor(record.DisableCount)
+	offenseCount := record.DisableCount
+	c.resolverHealthMu.Unlock()
+
+	nextAt := now.Add(maxDuration(5*time.Second, cooldown))
 
 	c.resolverHealthMu.Lock()
 	meta := c.resolverRecheck[serverKey]
@@ -575,14 +728,33 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 	delete(c.resolverHealth, serverKey)
 	c.resolverHealthMu.Unlock()
 
+	// Observability: capture the counters that drove the prune BEFORE the
+	// stats are reset, so the log line shows WHY this resolver was pruned.
+	// The pruning loss is used (the trickle window for a probationary
+	// resolver), so the line shows the real evidence, not the seed.
+	lossPM, sent, _ := c.resolverPruningLossPerMille(serverKey)
+	acked := uint64(0)
+	if sent > 0 {
+		if lossPM >= 1000 {
+			acked = 0
+		} else {
+			acked = sent - sent*lossPM/1000
+		}
+	}
+
 	c.clearPreferredResolverReferences(serverKey)
 	c.balancer.ResetServerStats(serverKey)
 	if c.log != nil {
 		c.log.Warnf(
-			"\U0001F6D1 <yellow>DNS server <cyan>%s</cyan> disabled due to: <red>%s</red></yellow> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan>",
+			"\U0001F6D1 <yellow>DNS server <cyan>%s</cyan> disabled due to: <red>%s</red></yellow> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan> <magenta>|</magenta> <blue>sent</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>acked</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>loss</blue>: <cyan>%.1f%%</cyan> <magenta>|</magenta> <blue>offense</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>cooldown</blue>: <cyan>%s</cyan>",
 			conn.ResolverLabel,
 			cause,
 			c.activeResolverCount(),
+			sent,
+			acked,
+			float64(lossPM)/10.0,
+			offenseCount,
+			cooldown.Round(time.Second),
 		)
 	}
 	c.logResolverRuntimeState()
@@ -649,14 +821,14 @@ func (c *Client) reactivateResolverConnection(serverKey string) bool {
 	}
 	c.resolverHealthMu.Unlock()
 
-	// Seed with a moderate initial score so the balancer doesn't flood the
-	// just-reactivated resolver before it has proven itself. Stats were zeroed
-	// when the resolver was disabled; seeding conservatively (80% delivery)
-	// lets it participate immediately but at lower priority than healthy peers.
-	c.balancer.SeedConservativeStats(serverKey)
+	// Seed as BAD (80% loss) and start post-rejoin probation: the resolver
+	// starts at the back of the selection queue and is rate-capped to the
+	// trickle (~2 q/s) until it proves itself, so it cannot be stampeded
+	// again the way the 17:20 spike showed.
+	c.balancer.SeedProbationaryStats(serverKey)
 	if c.log != nil {
 		c.log.Infof(
-			"\U0001F504 <green>DNS server <cyan>%s</cyan> re-activated after successful recheck.</green> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan>",
+			"\U0001F504 <green>DNS server <cyan>%s</cyan> re-activated after successful recheck (probation: seeded 80%% loss, trickle-capped).</green> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan>",
 			conn.ResolverLabel,
 			c.activeResolverCount(),
 		)

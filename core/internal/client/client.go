@@ -56,22 +56,27 @@ type Client struct {
 	codec    *security.Codec
 	balancer *Balancer
 
-	connections        []Connection
-	connectionsByKey   map[string]int
-	successMTUChecks   bool
-	udpBufferPool      sync.Pool
-	resolverConnsMu    sync.Mutex
-	resolverConns      map[string]chan pooledUDPConn
-	resolverAddrMu     sync.RWMutex
-	resolverAddrCache  map[string]*net.UDPAddr
-	resolverStatsMu    sync.RWMutex
-	resolverPending    map[resolverSampleKey]resolverSample
-	downstreamReplay   downstreamReplayCache
-	resolverHealthMu   sync.RWMutex
-	resolverHealth     map[string]*resolverHealthState
-	resolverRecheck    map[string]resolverRecheckState
-	runtimeDisabled    map[string]resolverDisabledState
-	resolverRecheckSem chan struct{}
+	connections       []Connection
+	connectionsByKey  map[string]int
+	successMTUChecks  bool
+	udpBufferPool     sync.Pool
+	resolverConnsMu   sync.Mutex
+	resolverConns     map[string]chan pooledUDPConn
+	resolverAddrMu    sync.RWMutex
+	resolverAddrCache map[string]*net.UDPAddr
+	resolverStatsMu   sync.RWMutex
+	resolverPending   map[resolverSampleKey]resolverSample
+	downstreamReplay  downstreamReplayCache
+	resolverHealthMu  sync.RWMutex
+	resolverHealth    map[string]*resolverHealthState
+	resolverRecheck   map[string]resolverRecheckState
+	runtimeDisabled   map[string]resolverDisabledState
+	// resolverOffenseHistory counts how many times each resolver has been
+	// pruned (disable count), surviving rejoins so repeat offenders get an
+	// escalating recheck cooldown. It is guarded by resolverHealthMu. An
+	// offense older than resolverOffenseResetAfter resets the count.
+	resolverOffenseHistory map[string]*resolverOffenseRecord
+	resolverRecheckSem     chan struct{}
 	// Unix-nanos of the last speculative "discovery" recheck (re-probing a
 	// never-valid resolver). Trickles discovery so it never bursts bandwidth
 	// away from the user's live traffic; see runResolverRecheckBatch.
@@ -207,6 +212,10 @@ type Client struct {
 	// Traffic byte counters (per-session, reset on resetRuntimeBindings)
 	txTotalBytes atomic.Uint64
 	rxTotalBytes atomic.Uint64
+	// offeredQueriesTotal counts every DNS query offered to a resolver
+	// (per-session). The traffic reporter derives offered q/s from it, so
+	// the next diagnosis can see the offered load that preceded a spike.
+	offeredQueriesTotal atomic.Uint64
 	// uploadLoss estimates real tunnel loss from the upload retransmit rate.
 	uploadLoss tunnelLossMeter
 
@@ -658,6 +667,20 @@ func buildResolverCacheMTULookup(entries []ResolverCacheEntry) map[string]Resolv
 	return lookup
 }
 
+// effectiveGlobalQueryRate returns the global offered-rate cap (queries per
+// second) the query limiter enforces: the offered-rate governor
+// (GLOBAL_OFFERED_QPS_MAX) by default, or the legacy
+// QUERY_RATE_LIMIT_PER_SECOND when the operator set a stricter cap. The
+// most restrictive cap governs; the governor never loosens an
+// operator-set cap. A zero result means the global scope is off.
+func effectiveGlobalQueryRate(cfg config.ClientConfig) float64 {
+	rate := cfg.GlobalOfferedQPSMax
+	if cfg.QueryRateLimitPerSecond > 0 && cfg.QueryRateLimitPerSecond < rate {
+		rate = cfg.QueryRateLimitPerSecond
+	}
+	return rate
+}
+
 func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Client {
 	// Apply the configured QNAME label shaping process-wide before any tunnel
 	// query is built (server-transparent; affects only how the payload is split
@@ -680,8 +703,15 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		codec:    codec,
 		balancer: NewBalancer(balancerStrategy),
 		pacer:    newResolverPacer(cfg.ResolverRateLimitEnabled),
+		// The offered-rate governor (GLOBAL_OFFERED_QPS_MAX, default 2000
+		// q/s) is the default ceiling on total offered queries per second.
+		// A stricter legacy QUERY_RATE_LIMIT_PER_SECOND still wins when
+		// set (the most restrictive cap governs); the governor never
+		// loosens an operator-set cap. The governor is intentionally not
+		// folded into QueryRateLimited(), so it paces the offered rate
+		// without forcing duplication to 1 or disabling session racing.
 		queryLimiter: newQueryRateLimiter(
-			cfg.QueryRateLimitPerSecond,
+			effectiveGlobalQueryRate(cfg),
 			cfg.QueryRateLimitPerResolverPerSecond,
 			cfg.QueryRateLimitPerDomainPerSecond,
 			cfg.QueryRateLimitBurst,
@@ -711,6 +741,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		resolverHealth:                        make(map[string]*resolverHealthState),
 		resolverRecheck:                       make(map[string]resolverRecheckState),
 		runtimeDisabled:                       make(map[string]resolverDisabledState),
+		resolverOffenseHistory:                make(map[string]*resolverOffenseRecord),
 		resolverRecheckSem:                    make(chan struct{}, max(1, cfg.RecheckBatchSize)),
 		mtuTestRetries:                        cfg.MTUTestRetries,
 		mtuTestTimeout:                        time.Duration(cfg.MTUTestTimeout * float64(time.Second)),
@@ -783,10 +814,17 @@ func (c *Client) Run(ctx context.Context) error {
 	defer c.runtimePhase.Store(clientPhaseStopped)
 	c.log.Infof("\U0001F504 <cyan>Starting main runtime loop...</cyan>")
 	if c.queryLimiter != nil {
+		// The effective global cap is the governor (or a stricter legacy
+		// cap); duplication is forced to 1 only by the legacy
+		// QUERY_RATE_LIMIT_* scopes, never by the governor alone.
+		dupNote := ""
+		if c.cfg.QueryRateLimited() {
+			dupNote = " (duplication forced to 1, session racing off)"
+		}
 		c.log.Infof(
-			"\U0001F6A6 <cyan>Query rate limit: total=%g/s per-resolver=%g/s per-domain=%g/s burst=%d jitter=%g (duplication forced to 1, session racing off)</cyan>",
-			c.cfg.QueryRateLimitPerSecond, c.cfg.QueryRateLimitPerResolverPerSecond, c.cfg.QueryRateLimitPerDomainPerSecond,
-			c.cfg.QueryRateLimitBurst, c.cfg.QueryTimingJitter,
+			"\U0001F6A6 <cyan>Query rate limit: total=%g/s (governor cap %g/s) per-resolver=%g/s per-domain=%g/s burst=%d jitter=%g%s</cyan>",
+			c.queryLimiter.GlobalRate(), c.cfg.GlobalOfferedQPSMax, c.cfg.QueryRateLimitPerResolverPerSecond, c.cfg.QueryRateLimitPerDomainPerSecond,
+			c.cfg.QueryRateLimitBurst, c.cfg.QueryTimingJitter, dupNote,
 		)
 	}
 	c.logConnectionProgress("starting", 5)

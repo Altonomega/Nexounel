@@ -104,6 +104,22 @@ type ClientConfig struct {
 	// by a random fraction up to this value, so traffic has no fixed rhythm.
 	// Only lengthens gaps. 0 = off (default).
 	QueryTimingJitter float64 `toml:"QUERY_TIMING_JITTER"`
+	// GlobalOfferedQPSMax (GLOBAL_OFFERED_QPS_MAX) is the offered-rate
+	// governor: the hard cap on TOTAL DNS queries offered per second across
+	// all resolvers — data, ARQ resends, control, probes, everything counts
+	// (the limiter is consulted on every send path). It is the fleet's
+	// rate-limit knee guard: under sustained upload the offered rate climbs
+	// past the fleet's knee and the fleet collapses (spike observed at
+	// ~3,000 q/s offered, below the ~5,100 q/s estimate, so the knee is
+	// lower than estimated or degrades under sustained load). The governor
+	// caps offered load below the knee so the collapse cannot start.
+	// Default 2000 q/s: well under the ~3,000 q/s onset, far above the
+	// ~1,000 q/s a clean upload needs (downloads peak ~180 q/s). 0 =
+	// default (2000); set a very large value to effectively disable.
+	// Unlike the legacy QUERY_RATE_LIMIT_* scopes it does NOT force
+	// duplication to 1 — the governor only paces the offered rate, the
+	// tunnel's redundancy stays as configured.
+	GlobalOfferedQPSMax float64 `toml:"GLOBAL_OFFERED_QPS_MAX"`
 	// ResolverTransport selects how DNS queries reach resolvers:
 	//   "auto" (default) — probe over UDP first; if no resolver passes MTU
 	//                       testing, retry the whole fleet over TCP/53.
@@ -433,6 +449,14 @@ type ClientConfigFlagBinder struct {
 	flagToField map[string]string
 }
 
+// defaultGlobalOfferedQPSMax is the offered-rate governor default (queries
+// per second, total across all resolvers). Derived from Proof's field test:
+// the loss spike triggered at ~3,000 q/s offered, below the ~5,100 q/s knee
+// estimate, so the cap sits a third below the observed onset while leaving
+// ample headroom over clean-operation rates (downloads ~180 q/s, uploads
+// ~700–1,000 q/s). Tunable via GLOBAL_OFFERED_QPS_MAX.
+const defaultGlobalOfferedQPSMax = 2000
+
 func defaultClientConfig() ClientConfig {
 	return ClientConfig{
 		ConfigPreset:                          "default",
@@ -470,6 +494,7 @@ func defaultClientConfig() ClientConfig {
 		RecheckInactiveIntervalSeconds:        30.0,
 		RecheckServerIntervalSeconds:          1.0,
 		RecheckBatchSize:                      30,
+		GlobalOfferedQPSMax:                   defaultGlobalOfferedQPSMax,
 		AutoDisableTimeoutServers:             true,
 		// A resolver is only culled after this many seconds of *uninterrupted*
 		// timeouts (zero successes). 20s was too twitchy for long/lossy sessions:
@@ -922,6 +947,14 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.QueryRateLimitPerDomainPerSecond = max(cfg.QueryRateLimitPerDomainPerSecond, 0)
 	cfg.QueryRateLimitBurst = clampInt(cfg.QueryRateLimitBurst, 1, 64)
 	cfg.QueryTimingJitter = clampFloat(cfg.QueryTimingJitter, 0, 1)
+	// The offered-rate governor defaults on (2000 q/s) when unset; an
+	// explicit value wins. It is clamped, not disabled, at 0 — 0 means
+	// "use the default", so an operator disables it by setting a very
+	// large value. The governor is deliberately NOT folded into
+	// QueryRateLimited(): it paces the offered rate only and must not
+	// force duplication to 1 or disable session-init racing (those are
+	// the legacy per-network caps' side effects, not the governor's).
+	cfg.GlobalOfferedQPSMax = clampFloat(defaultFloatAtMostZero(cfg.GlobalOfferedQPSMax, defaultGlobalOfferedQPSMax), 0, 100000)
 	if cfg.QueryRateLimited() {
 		// Under a query cap a duplicate costs the same as a new packet, while
 		// ARQ only resends what was actually lost, so spend nothing on copies.

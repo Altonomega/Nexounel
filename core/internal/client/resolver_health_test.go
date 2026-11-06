@@ -1116,6 +1116,10 @@ func TestResolverHealthSuccessClearsTimeoutHistory(t *testing.T) {
 	base := time.Date(2026, 3, 26, 2, 0, 0, 0, time.UTC)
 	c.recordResolverHealthEvent("a", true, base.Add(2*time.Second))
 	c.recordResolverHealthEvent("a", false, base)
+
+	// One success must NOT clear the timeout window: a flapping resolver
+	// could otherwise reset a mature window with a single lucky success
+	// and never accumulate the window that triggers pruning.
 	c.recordResolverHealthEvent("a", true, base.Add(3*time.Second))
 
 	c.resolverHealthMu.Lock()
@@ -1125,10 +1129,63 @@ func TestResolverHealthSuccessClearsTimeoutHistory(t *testing.T) {
 	if state == nil {
 		t.Fatal("expected resolver health state to exist")
 	}
-	if len(state.Events) != 0 {
-		t.Fatalf("expected success to clear timeout history, got %d events", len(state.Events))
+	if len(state.Events) != 1 {
+		t.Fatalf("expected one success to leave the timeout window intact, got %d events", len(state.Events))
 	}
 	if state.LastSuccessAt != base.Add(3*time.Second) {
 		t.Fatalf("unexpected last success timestamp: got=%s want=%s", state.LastSuccessAt, base.Add(3*time.Second))
+	}
+
+	// A second consecutive success still does not clear the window.
+	c.recordResolverHealthEvent("a", true, base.Add(4*time.Second))
+	c.resolverHealthMu.Lock()
+	state = c.resolverHealth["a"]
+	c.resolverHealthMu.Unlock()
+	if len(state.Events) != 1 {
+		t.Fatalf("expected two successes to leave the timeout window intact, got %d events", len(state.Events))
+	}
+
+	// The third consecutive success clears it: the resolver is credibly
+	// recovered.
+	c.recordResolverHealthEvent("a", true, base.Add(5*time.Second))
+	c.resolverHealthMu.Lock()
+	state = c.resolverHealth["a"]
+	c.resolverHealthMu.Unlock()
+	if len(state.Events) != 0 {
+		t.Fatalf("expected three consecutive successes to clear timeout history, got %d events", len(state.Events))
+	}
+	if state.LastSuccessAt != base.Add(5*time.Second) {
+		t.Fatalf("unexpected last success timestamp: got=%s want=%s", state.LastSuccessAt, base.Add(5*time.Second))
+	}
+}
+
+// A failure resets the consecutive-success count, so successes split by a
+// timeout can never accumulate to clear the window.
+func TestResolverHealthFailureResetsSuccessStreak(t *testing.T) {
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 3.0,
+	}, "a", "b", "c", "d")
+	c.initResolverRecheckMeta()
+
+	base := time.Date(2026, 3, 26, 2, 0, 0, 0, time.UTC)
+	c.recordResolverHealthEvent("a", false, base)
+	c.recordResolverHealthEvent("a", true, base.Add(time.Second))
+	c.recordResolverHealthEvent("a", true, base.Add(2*time.Second))
+	// Two successes, then a failure resets the streak to zero.
+	c.recordResolverHealthEvent("a", false, base.Add(3*time.Second))
+	c.recordResolverHealthEvent("a", true, base.Add(4*time.Second))
+	c.recordResolverHealthEvent("a", true, base.Add(5*time.Second))
+
+	c.resolverHealthMu.Lock()
+	state := c.resolverHealth["a"]
+	c.resolverHealthMu.Unlock()
+	if state == nil {
+		t.Fatal("expected resolver health state to exist")
+	}
+	// Only two consecutive successes after the last failure: the window
+	// (two timeout events) must survive.
+	if len(state.Events) != 2 {
+		t.Fatalf("expected timeout window to survive successes split by a failure, got %d events", len(state.Events))
 	}
 }

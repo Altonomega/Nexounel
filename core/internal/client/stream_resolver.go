@@ -340,6 +340,24 @@ func (c *Client) selectUniqueRuntimeConnections(requiredCount int) ([]Connection
 			filtered = append(filtered, conn)
 		}
 	}
+
+	// Probationary rejoin trickle: a rejoined resolver proves itself via a
+	// rate-capped share of control packets (at most ~2 q/s, enforced by the
+	// trickle picker) — never as a DATA preferred or duplicate target, and
+	// never more often than the cap. This is the only path that picks a
+	// probationary resolver, so it can reach its 50-send graduation without
+	// ever being hammered again.
+	if trickle, ok := c.balancer.ProbationaryTricklePick(); ok && !c.isRuntimeDisabledResolver(trickle.Key) {
+		out := make([]Connection, 0, len(filtered)+1)
+		out = append(out, trickle)
+		for _, conn := range filtered {
+			if conn.Key != trickle.Key {
+				out = append(out, conn)
+			}
+		}
+		filtered = out
+	}
+
 	if len(filtered) > requiredCount {
 		filtered = filtered[:requiredCount]
 	}
@@ -379,6 +397,14 @@ func (c *Client) getValidStreamPreferredConnection(stream *Stream_client) (Conne
 	if c.isRuntimeDisabledResolver(preferredKey) {
 		return Connection{}, false
 	}
+	// A probationary resolver is never a valid preferred: it is still
+	// re-proving itself via the trickle, so a stream must not pin to it.
+	// (In practice a pinned resolver cannot become probationary — the pin
+	// is cleared when it is disabled and probation starts only on
+	// reactivation — but this guards the invariant.)
+	if c.balancer.IsProbationary(preferredKey) {
+		return Connection{}, false
+	}
 	connection, ok := c.GetConnectionByKey(preferredKey)
 	if !ok || !connection.IsValid {
 		return Connection{}, false
@@ -394,13 +420,15 @@ func (c *Client) selectAlternateStreamConnection(excludeKey string) (Connection,
 	now := c.now()
 	if excludeKey != "" {
 		if replacement, ok := c.balancer.GetBestConnectionExcluding(excludeKey); ok &&
-			!c.isRuntimeDisabledResolver(replacement.Key) && !c.pacer.paced(replacement.Key, now) {
+			!c.isRuntimeDisabledResolver(replacement.Key) && !c.pacer.paced(replacement.Key, now) && !c.balancer.IsProbationary(replacement.Key) {
 			return replacement, true
 		}
 	}
 
 	var pacedFallback Connection
 	var havePacedFallback bool
+	var probationaryFallback Connection
+	var haveProbationaryFallback bool
 	for _, connection := range c.balancer.GetAllValidConnections() {
 		if !connection.IsValid || connection.Key == "" {
 			continue
@@ -409,6 +437,17 @@ func (c *Client) selectAlternateStreamConnection(excludeKey string) (Connection,
 			continue
 		}
 		if excludeKey != "" && connection.Key == excludeKey {
+			continue
+		}
+		// Probationary resolvers are never pinned as a stream's preferred:
+		// they are still re-proving themselves via the rate-capped trickle.
+		// Remember one only as a last resort so a stream is never stranded
+		// when the whole pool is probationary.
+		if c.balancer.IsProbationary(connection.Key) {
+			if !haveProbationaryFallback {
+				probationaryFallback = connection
+				haveProbationaryFallback = true
+			}
 			continue
 		}
 		// Prefer a resolver with headroom; remember a paced one only as a fallback
@@ -425,6 +464,9 @@ func (c *Client) selectAlternateStreamConnection(excludeKey string) (Connection,
 
 	if havePacedFallback {
 		return pacedFallback, true
+	}
+	if haveProbationaryFallback {
+		return probationaryFallback, true
 	}
 	return Connection{}, false
 }
