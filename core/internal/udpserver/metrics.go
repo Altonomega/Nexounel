@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
+	"github.com/Altonomega/Nexounel/core/internal/version"
 )
 
 type monitoringMetric struct {

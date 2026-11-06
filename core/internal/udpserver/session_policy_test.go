@@ -10,7 +10,7 @@ package udpserver
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 // The guarantee that protects every existing CottenDns deployment: a server

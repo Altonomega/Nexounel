@@ -12,9 +12,9 @@
 package dnsparser
 
 import (
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func buildTXTAnswerChunks(rawFrame []byte, baseEncode bool) ([][]byte, error) {

@@ -19,16 +19,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	dnsCache "github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
-	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/netutil"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	dnsCache "github.com/Altonomega/Nexounel/core/internal/dnscache"
+	domainMatcher "github.com/Altonomega/Nexounel/core/internal/domainmatcher"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	fragmentStore "github.com/Altonomega/Nexounel/core/internal/fragmentstore"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/netutil"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 const (

@@ -16,13 +16,13 @@ import (
 	"net"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/client/handlers"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/client/handlers"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	fragmentStore "github.com/Altonomega/Nexounel/core/internal/fragmentstore"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 const clientRXDropLogInterval = 2 * time.Second

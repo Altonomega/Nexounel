@@ -33,8 +33,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // maxBootstrapKeys bounds the pending bootstrap set: trial cost

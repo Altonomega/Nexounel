@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // Join-token issuance and lifecycle, panel side (§3.2, §3.4).

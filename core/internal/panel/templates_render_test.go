@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
+	"github.com/Altonomega/Nexounel/core/internal/mesh"
 )
 
 // TestDashboardRendersTheme guards the panel redesign: the dark theme CSS

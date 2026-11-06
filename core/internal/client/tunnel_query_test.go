@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 func TestNextQueryTypeDefaultsToTXT(t *testing.T) {

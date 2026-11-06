@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // MockPacketEnqueuer captures packets sent by ARQ

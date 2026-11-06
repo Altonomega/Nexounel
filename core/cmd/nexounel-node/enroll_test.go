@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
 )
 
 func TestLoadJoinTokenPrecedence(t *testing.T) {

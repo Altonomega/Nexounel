@@ -15,7 +15,7 @@ artifact and never pipes a download into a shell.
 
 ```sh
 # Download the installer, inspect it, then run it:
-curl -fLO https://github.com/MNSH-Nexo/Nexounel/releases/download/<version>/install.sh
+curl -fLO https://github.com/Altonomega/Nexounel/releases/download/<version>/install.sh
 less install.sh
 sudo bash install.sh --mother    # mother server: server + panel
 sudo bash install.sh --node      # node server: node only

@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	fragmentStore "github.com/Altonomega/Nexounel/core/internal/fragmentstore"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 type testReadWriteCloser struct {

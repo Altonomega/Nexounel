@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/udpframe"
+	"github.com/Altonomega/Nexounel/core/internal/udpframe"
 )
 
 const (

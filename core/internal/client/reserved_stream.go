@@ -23,9 +23,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 var (

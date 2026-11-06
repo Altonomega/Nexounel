@@ -16,8 +16,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // LocalSocksVersion sentinel values for HTTP proxy modes (above any real SOCKS version byte).

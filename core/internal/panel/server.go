@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
 )
 
 // Server is the panel HTTP server. Everything it serves lives under the

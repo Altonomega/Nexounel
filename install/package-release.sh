@@ -112,7 +112,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 STAGING="$WORKDIR/$TOP_DIR"
 mkdir -p "$STAGING/configs" "$STAGING/units" "$STAGING/logrotate"
 
-LDFLAGS="-X github.com/MNSH-Nexo/Nexounel/core/internal/version.BuildVersion=${VERSION}"
+LDFLAGS="-X github.com/Altonomega/Nexounel/core/internal/version.BuildVersion=${VERSION}"
 export GOPROXY=off
 export CGO_ENABLED=0
 

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func validTestKey(seed byte) string {

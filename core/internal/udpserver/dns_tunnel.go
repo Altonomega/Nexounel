@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/inflight"
+	"github.com/Altonomega/Nexounel/core/internal/dnscache"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/inflight"
 )
 
 var ErrInvalidDNSUpstream = errors.New("invalid dns upstream")

@@ -42,7 +42,7 @@ design: artifacts are checksum-verified before use).
 
 ```sh
 # Inspect first, then run. Replace <version> with the release you want.
-curl -fLO https://github.com/MNSH-Nexo/Nexounel/releases/download/<version>/install.sh
+curl -fLO https://github.com/Altonomega/Nexounel/releases/download/<version>/install.sh
 less install.sh
 sudo bash install.sh --mother    # mother server: server + panel
 sudo bash install.sh --node      # node server: node only

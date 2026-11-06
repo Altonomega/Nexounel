@@ -11,8 +11,8 @@ import (
 	"bytes"
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func buildRawPacket(

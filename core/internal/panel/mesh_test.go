@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/mesh"
 )
 
 func meshSnapshotFixture() *control.MeshSnapshot {

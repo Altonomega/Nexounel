@@ -18,7 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // QueryShaping holds the client-only, server-transparent DNS fingerprint knobs

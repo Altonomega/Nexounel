@@ -18,7 +18,7 @@ import (
 	"net"
 	"time"
 
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 const (

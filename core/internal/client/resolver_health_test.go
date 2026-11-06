@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 func waitForResolverHealthCondition(t *testing.T, timeout time.Duration, cond func() bool, message string) {

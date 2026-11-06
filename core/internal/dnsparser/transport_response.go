@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"strings"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func BuildTXTResponsePacket(questionPacket []byte, answerName string, answerPayloads [][]byte) ([]byte, error) {

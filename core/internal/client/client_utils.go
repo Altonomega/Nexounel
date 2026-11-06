@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/version"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // randomBytes generates random bytes using a cryptographically secure PRNG.

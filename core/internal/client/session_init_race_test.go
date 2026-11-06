@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 func TestNextSessionInitRacersReturnsDistinctResolvers(t *testing.T) {

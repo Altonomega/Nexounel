@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // Dashboard POST handlers. All run behind requireAuth (session +

@@ -1,10 +1,10 @@
 package client
 
 import (
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func (c *Client) encryptedDownstream() bool {

@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // nodeIDPattern mirrors multisession.nodeIDPattern, which is unexported:

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func createTestClient(t *testing.T) *Client {

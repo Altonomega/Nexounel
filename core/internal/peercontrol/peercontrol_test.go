@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
+	"github.com/Altonomega/Nexounel/core/internal/mesh"
 )
 
 var testSecret = []byte("test-mesh-control-secret-32-bytes!")

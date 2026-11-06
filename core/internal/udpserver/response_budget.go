@@ -3,8 +3,8 @@ package udpserver
 import (
 	"time"
 
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 const udpBudgetStallTimeout = 30 * time.Second

@@ -28,8 +28,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // enrollmentExchangeBudget bounds one enrollment exchange on a

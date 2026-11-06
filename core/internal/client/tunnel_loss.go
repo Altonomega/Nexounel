@@ -18,7 +18,7 @@ package client
 import (
 	"sync/atomic"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 const tunnelLossWindow = 200

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
 )
 
 func TestOpenReservedStreamRejectsBadTarget(t *testing.T) {

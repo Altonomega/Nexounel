@@ -3,7 +3,7 @@ package udpserver
 import (
 	"encoding/binary"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 // resolveStreamTargetPort decides which port a TCP-forward STREAM_SYN

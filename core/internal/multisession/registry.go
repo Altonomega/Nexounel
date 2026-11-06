@@ -29,7 +29,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // Node is one registry entry: an ID bound to exactly one key.

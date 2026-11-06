@@ -20,8 +20,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 type ClientConfig struct {

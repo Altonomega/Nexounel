@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // WizardInput is the validated input shared by both wizard paths.

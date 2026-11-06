@@ -24,9 +24,9 @@ import (
 	"context"
 	"net"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // reservedTargetHost names a reserved stream in the stream's

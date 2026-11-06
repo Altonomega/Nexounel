@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 func TestZoneNSDropsInZoneNames(t *testing.T) {

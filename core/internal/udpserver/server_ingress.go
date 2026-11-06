@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"time"
 
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	domainMatcher "github.com/Altonomega/Nexounel/core/internal/domainmatcher"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func (s *Server) handlePacket(packet []byte, tcp ...bool) []byte {

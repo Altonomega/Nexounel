@@ -12,11 +12,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func (s *Server) debugLoggingEnabled() bool {

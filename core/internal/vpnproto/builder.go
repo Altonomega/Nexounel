@@ -7,7 +7,7 @@
 
 package vpnproto
 
-import "github.com/MNSH-Nexo/Nexounel/core/internal/security"
+import "github.com/Altonomega/Nexounel/core/internal/security"
 
 type BuildOptions struct {
 	SessionID       uint16

@@ -15,15 +15,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/fec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	domainMatcher "github.com/Altonomega/Nexounel/core/internal/domainmatcher"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/fec"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // tunnelBaseDomain returns the configured tunnel domain that is the suffix of

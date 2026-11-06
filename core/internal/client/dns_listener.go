@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	dnsCache "github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
-	dnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/netutil"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	dnsCache "github.com/Altonomega/Nexounel/core/internal/dnscache"
+	dnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/netutil"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 type dnsFragmentKey struct {

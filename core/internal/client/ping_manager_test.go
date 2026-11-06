@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
 )
 
 func TestStreamZeroAllowsMultipleQueuedPingsWithDifferentSequence(t *testing.T) {

@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	SocksProto "github.com/MNSH-Nexo/Nexounel/core/internal/socksproto"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/udpframe"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	SocksProto "github.com/Altonomega/Nexounel/core/internal/socksproto"
+	"github.com/Altonomega/Nexounel/core/internal/udpframe"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 const maxDeferredConnectAttemptTimeout = 15 * time.Second

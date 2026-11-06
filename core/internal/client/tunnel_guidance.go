@@ -1,6 +1,6 @@
 package client
 
-import "github.com/MNSH-Nexo/Nexounel/core/internal/tunnelinfo"
+import "github.com/Altonomega/Nexounel/core/internal/tunnelinfo"
 
 // TunnelGuidance reports the configured mode and setup requirements without
 // exposing the key, proxy password, resolver pin or other credentials.

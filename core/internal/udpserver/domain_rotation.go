@@ -15,8 +15,8 @@ import (
 	"math/rand/v2"
 	"strings"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // servedAdvertisedDomains keeps the advertised domains this server actually

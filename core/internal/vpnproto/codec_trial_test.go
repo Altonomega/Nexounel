@@ -11,9 +11,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // A 32-char shared key works for every method: deriveKey hashes/pads it per

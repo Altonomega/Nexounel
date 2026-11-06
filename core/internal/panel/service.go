@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mesh"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/mesh"
 )
 
 // This file is the single service layer shared by the dashboard UI and

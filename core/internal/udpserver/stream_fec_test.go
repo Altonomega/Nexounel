@@ -19,10 +19,10 @@ import (
 	"sync"
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/fec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/fec"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func TestStreamServerAutoFECEnablesOnLoss(t *testing.T) {

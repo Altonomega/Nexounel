@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // StreamState mirrors Python's Stream_State enum

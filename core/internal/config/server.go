@@ -22,7 +22,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
 )
 
 type ServerConfig struct {

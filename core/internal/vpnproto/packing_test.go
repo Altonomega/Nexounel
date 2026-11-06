@@ -3,7 +3,7 @@ package vpnproto
 import (
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 func TestIsPackableControlPacketIncludesSmallSocksResults(t *testing.T) {

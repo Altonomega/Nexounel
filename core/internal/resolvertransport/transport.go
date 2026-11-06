@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
+	"github.com/Altonomega/Nexounel/core/internal/dnsparser"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )

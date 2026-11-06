@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // JSON agent API.

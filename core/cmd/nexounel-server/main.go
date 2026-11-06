@@ -18,17 +18,17 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/tunnelinfo"
-	UDPServer "github.com/MNSH-Nexo/Nexounel/core/internal/udpserver"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/runtimepath"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/tunnelinfo"
+	UDPServer "github.com/Altonomega/Nexounel/core/internal/udpserver"
+	"github.com/Altonomega/Nexounel/core/internal/version"
 )
 
 func main() {
@@ -92,7 +92,7 @@ func main() {
 	}
 
 	log.Infof("============================================================")
-	log.Infof("<cyan>GitHub:</cyan> <yellow>https://github.com/MNSH-Nexo/Nexounel</yellow>")
+	log.Infof("<cyan>GitHub:</cyan> <yellow>https://github.com/Altonomega/Nexounel</yellow>")
 	log.Infof("<cyan>Build Version:</cyan> <yellow>%s</yellow>", version.GetVersion())
 	log.Infof("============================================================")
 

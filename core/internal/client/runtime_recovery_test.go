@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 func TestRequestTransportRecoveryArmsFullRescanForExplicitTransport(t *testing.T) {

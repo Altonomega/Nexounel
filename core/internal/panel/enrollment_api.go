@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
 )
 
 // Loopback enrollment API (§3.4): the endpoint the tunnel server's

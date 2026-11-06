@@ -50,7 +50,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // CapabilityLabel is the published, non-secret bootstrap capability

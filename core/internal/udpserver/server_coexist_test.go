@@ -18,8 +18,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
 )
 
 func TestEncryptedConnCeilingAlwaysLeavesTCPHeadroom(t *testing.T) {

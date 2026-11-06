@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	cottenserver "github.com/MNSH-Nexo/Nexounel/core/server"
+	cottenserver "github.com/Altonomega/Nexounel/core/server"
 )
 
 const testKey = "test-only-probe-account-key-0000000001"

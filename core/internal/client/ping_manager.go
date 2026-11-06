@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 type PingManager struct {

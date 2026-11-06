@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // stubControlHandler records commands and, for add/rotate, proves the

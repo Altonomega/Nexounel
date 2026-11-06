@@ -15,7 +15,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 type EncryptionKeyInfo struct {

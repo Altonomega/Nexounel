@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 // Sockets must never outnumber readers, or a socket would sit unread. They must

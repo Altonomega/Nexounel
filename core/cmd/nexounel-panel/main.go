@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/panel"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/panel"
+	"github.com/Altonomega/Nexounel/core/internal/runtimepath"
+	"github.com/Altonomega/Nexounel/core/internal/version"
 )
 
 func main() {

@@ -30,7 +30,7 @@ package client
 import (
 	"time"
 
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // applyServerClientPolicy publishes any policy carried by a SESSION_ACCEPT

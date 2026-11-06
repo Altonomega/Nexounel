@@ -19,9 +19,9 @@ package client
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
 )
 
 func TestPushTXPacketDedupsIdenticalAckNack(t *testing.T) {

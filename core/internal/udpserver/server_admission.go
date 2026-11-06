@@ -1,9 +1,9 @@
 package udpserver
 
 import (
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	domainMatcher "github.com/Altonomega/Nexounel/core/internal/domainmatcher"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 type preparedIngress struct {

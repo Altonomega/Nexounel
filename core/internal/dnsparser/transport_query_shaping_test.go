@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	basecodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	basecodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 const shapingTestDomain = "v.example.com"

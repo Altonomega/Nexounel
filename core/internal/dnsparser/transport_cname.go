@@ -22,10 +22,10 @@ import (
 	"sort"
 	"strings"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // firstQuestionQType returns the qType of the first question in a raw DNS

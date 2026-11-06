@@ -2,7 +2,7 @@
 // router. It does not bind ports, read key files or change system configuration.
 package server
 
-import "github.com/MNSH-Nexo/Nexounel/core/internal/udpserver"
+import "github.com/Altonomega/Nexounel/core/internal/udpserver"
 
 type Config = udpserver.EmbeddedConfig
 type Server = udpserver.Embedded

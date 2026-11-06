@@ -16,7 +16,7 @@
 #     the default list entirely.
 #   * --mirror URL flags prepend to the list (first --mirror wins).
 # Custom mirrors must serve the GitHub releases path layout, e.g.:
-#   # https://your-mirror.example.invalid/MNSH-Nexo/Nexounel/releases/download/<version>/<artifact>
+#   # https://your-mirror.example.invalid/Altonomega/Nexounel/releases/download/<version>/<artifact>
 # To add an Iranian mirror, point it at a host that mirrors
 # github.com releases under that path layout and prepend it with
 # --mirror or NEXOUNEL_MIRRORS. No mirror hostname is hardcoded here
@@ -43,7 +43,7 @@
 set -euo pipefail
 
 INSTALLER_VERSION="1.0.0"
-REPO_OWNER="MNSH-Nexo"
+REPO_OWNER="Altonomega"
 REPO_NAME="Nexounel"
 
 # Defaults. The server bind address is a CONFIG value, not an
@@ -665,7 +665,7 @@ acquire_from_source() {
     [ -f "$src_dir/core/go.mod" ] || die "source tarball does not contain core/go.mod: $src_dir"
     build_root="${staging}/nexounel-${RELEASE_VERSION}-linux-${arch}"
     mkdir -p "$build_root/configs" "$build_root/units" "$build_root/logrotate"
-    version_ldflags="-X github.com/MNSH-Nexo/Nexounel/core/internal/version.BuildVersion=${RELEASE_VERSION}"
+    version_ldflags="-X github.com/Altonomega/Nexounel/core/internal/version.BuildVersion=${RELEASE_VERSION}"
     export PATH="$go_bin_dir:$PATH"
     export GOCACHE="$cache_dir/gocache"
     export GOPROXY=off

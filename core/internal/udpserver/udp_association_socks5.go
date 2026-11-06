@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/udpframe"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/udpframe"
 )
 
 type externalSOCKSUDPAssociation struct {

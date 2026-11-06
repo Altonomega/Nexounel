@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/resolvertransport"
+	"github.com/Altonomega/Nexounel/core/internal/resolvertransport"
 )
 
 func (c *Client) encryptedResolverOptions() resolvertransport.Options {

@@ -3,8 +3,8 @@ package dnsparser
 import (
 	"encoding/binary"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // The first octet is a reorder-safe record index; the remaining 15 octets are

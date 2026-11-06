@@ -9,9 +9,9 @@ package handlers
 
 import (
 	"fmt"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 	"net"
 )
 

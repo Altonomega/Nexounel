@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/netutil"
+	"github.com/Altonomega/Nexounel/core/internal/netutil"
 )
 
 type TCPListener struct {

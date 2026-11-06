@@ -10,7 +10,7 @@ package udpserver
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
 )
 
 func TestGetOrCreateStreamEnforcesMaxStreamsPerSession(t *testing.T) {

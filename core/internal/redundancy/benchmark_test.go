@@ -10,7 +10,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
 )
 
 const (

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 func TestClusterConnectionsByMTU_GapBanding(t *testing.T) {

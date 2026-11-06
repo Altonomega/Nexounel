@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
 )
 
 func benchStream(id uint16) *Stream_client {

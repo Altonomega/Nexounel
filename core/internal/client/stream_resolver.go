@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // adaptiveDuplicationCeiling caps the duplication count chosen by tier-1

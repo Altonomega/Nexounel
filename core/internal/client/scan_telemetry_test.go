@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
 )
 
 // emitScanResult must stay silent during a normal tunnel run (the shared MTU

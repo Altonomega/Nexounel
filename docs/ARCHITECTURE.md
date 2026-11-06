@@ -320,5 +320,5 @@ tests/                             unit + lab integration tests
 
 Tunnel lineage: MasterDnsVPN (Amin Mahmoudi) → StormDNS (NullRoute1970)
 → CottenDNS (tajirax), MIT. Nexounel is an independent derivative by
-Mashani (MNSH-Nexo). Research reports that produced this plan are kept
+Mashani (Altonomega). Research reports that produced this plan are kept
 outside this repository.

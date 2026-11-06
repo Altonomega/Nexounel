@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/client"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/client"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 	"golang.org/x/net/proxy"
 )
 

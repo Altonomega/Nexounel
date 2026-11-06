@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"sync"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 var (

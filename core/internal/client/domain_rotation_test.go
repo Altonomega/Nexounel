@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func newRotationTestClient(t *testing.T, dir string) *Client {

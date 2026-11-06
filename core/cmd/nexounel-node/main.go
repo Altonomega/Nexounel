@@ -30,14 +30,14 @@ import (
 
 	rand "math/rand/v2"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/client"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/runtimepath"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/version"
+	"github.com/Altonomega/Nexounel/core/internal/client"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/runtimepath"
+	"github.com/Altonomega/Nexounel/core/internal/version"
 )
 
 func main() {

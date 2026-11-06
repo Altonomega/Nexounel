@@ -1,9 +1,9 @@
 package udpserver
 
 import (
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 func (s *Server) buildTunnelResponse(question []byte, name, domain string, packet VpnProto.Packet, mode uint8, codec *security.Codec) ([]byte, error) {

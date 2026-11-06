@@ -38,10 +38,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/client"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/enroll"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/client"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/enroll"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // errEnrolled is returned by runEnrollMode when enrollment

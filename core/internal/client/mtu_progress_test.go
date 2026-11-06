@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
 )
 
 func TestLogMTUProgressEmitsMachineLinesAtWarn(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 	"sync" // Added for sync.Pool
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/fec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/mlq"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/fec"
+	"github.com/Altonomega/Nexounel/core/internal/mlq"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 var txPacketPool = sync.Pool{

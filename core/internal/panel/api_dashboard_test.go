@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/control"
 )
 
 func (e *testEnv) doJSON(method, path, body string, cookie *http.Cookie, csrfHeader string) *httptest.ResponseRecorder {

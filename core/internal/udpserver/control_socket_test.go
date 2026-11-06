@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/control"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/control"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 // TestControlSocketReloadsRegistryWithoutRestart is the end-to-end

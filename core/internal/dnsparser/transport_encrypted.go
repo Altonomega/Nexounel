@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // BuildEncryptedVPNResponsePacketMatchingQuery encrypts the complete compressed

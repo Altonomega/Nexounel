@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // ProbeResults snapshots the per-resolver measurements from the most

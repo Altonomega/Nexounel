@@ -9,8 +9,8 @@ package client
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // buildTestClientWithConnections builds a client whose connections are explicit

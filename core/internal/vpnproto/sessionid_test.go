@@ -10,7 +10,7 @@ package vpnproto
 import (
 	"testing"
 
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // SessionID is a 16-bit field on the wire: ids above 255 must round-trip through

@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func TestEncodedCharsForPayloadUsesWorstCaseUploadPacketType(t *testing.T) {

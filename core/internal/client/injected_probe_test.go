@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 // fakeInjectingResolver answers every query with a forged NXDOMAIN at once and

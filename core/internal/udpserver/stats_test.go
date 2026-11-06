@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	fragmentStore "github.com/Altonomega/Nexounel/core/internal/fragmentstore"
 )
 
 // TestStatsZeroValueAndNilSafe exercises the documented contracts of Stats():

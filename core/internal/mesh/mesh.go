@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 // TermClass separates mother-issued terms from degraded terms. A

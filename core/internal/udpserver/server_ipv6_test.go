@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 func TestServerListenUDPIPv6(t *testing.T) {

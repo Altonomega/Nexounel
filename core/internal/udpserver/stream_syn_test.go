@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	fragmentStore "github.com/MNSH-Nexo/Nexounel/core/internal/fragmentstore"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	fragmentStore "github.com/Altonomega/Nexounel/core/internal/fragmentstore"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 // testNetConn is a minimal net.Conn fake. closed is atomic so tests that race

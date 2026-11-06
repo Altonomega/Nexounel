@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
 )
 
 type nodesContent struct {

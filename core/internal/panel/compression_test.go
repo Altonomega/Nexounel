@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 const fixtureServerConfig = `# Server fixture: comments and unrelated keys must survive.

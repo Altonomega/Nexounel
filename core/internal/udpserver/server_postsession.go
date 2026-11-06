@@ -11,11 +11,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/arq"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/logger"
-	SocksProto "github.com/MNSH-Nexo/Nexounel/core/internal/socksproto"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	"github.com/Altonomega/Nexounel/core/internal/arq"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
+	"github.com/Altonomega/Nexounel/core/internal/logger"
+	SocksProto "github.com/Altonomega/Nexounel/core/internal/socksproto"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 type deferredDispatchResult uint8

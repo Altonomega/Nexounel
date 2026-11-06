@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
 )
 
 func TestLoadClientConfigNormalizesAndLoadsResolvers(t *testing.T) {

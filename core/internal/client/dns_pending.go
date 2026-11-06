@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	dnsCache "github.com/MNSH-Nexo/Nexounel/core/internal/dnscache"
-	dnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
+	dnsCache "github.com/Altonomega/Nexounel/core/internal/dnscache"
+	dnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
 )
 
 const (

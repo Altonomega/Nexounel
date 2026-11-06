@@ -5,7 +5,7 @@
 // Year: 2026
 // ==============================================================================
 
-module github.com/MNSH-Nexo/Nexounel/core
+module github.com/Altonomega/Nexounel/core
 
 go 1.26.0
 

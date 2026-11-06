@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
-	domainMatcher "github.com/MNSH-Nexo/Nexounel/core/internal/domainmatcher"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
-	VpnProto "github.com/MNSH-Nexo/Nexounel/core/internal/vpnproto"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
+	domainMatcher "github.com/Altonomega/Nexounel/core/internal/domainmatcher"
+	"github.com/Altonomega/Nexounel/core/internal/security"
+	VpnProto "github.com/Altonomega/Nexounel/core/internal/vpnproto"
 )
 
 const (

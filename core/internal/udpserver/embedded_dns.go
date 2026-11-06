@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	DnsParser "github.com/MNSH-Nexo/Nexounel/core/internal/dnsparser"
+	DnsParser "github.com/Altonomega/Nexounel/core/internal/dnsparser"
 )
 
 // The shared cache's retention is an idle eviction interval. Embedded replies

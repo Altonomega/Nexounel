@@ -10,8 +10,8 @@ package vpnproto
 import (
 	"errors"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 var ErrInvalidCompressedPayload = errors.New("invalid compressed vpn payload")

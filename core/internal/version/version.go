@@ -9,7 +9,7 @@ package version
 
 import "strings"
 
-// BuildVersion is set at link-time using -ldflags "-X github.com/MNSH-Nexo/Nexounel/core/internal/version.BuildVersion=..."
+// BuildVersion is set at link-time using -ldflags "-X github.com/Altonomega/Nexounel/core/internal/version.BuildVersion=..."
 var BuildVersion = "dev"
 
 // GetVersion returns the current build version.

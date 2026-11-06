@@ -20,7 +20,7 @@ Download the installer, inspect it, then run it as a file (never
 `curl | sudo bash` — artifacts are SHA-256-verified before use):
 
 ```sh
-curl -fLO https://github.com/MNSH-Nexo/Nexounel/releases/download/<version>/install.sh
+curl -fLO https://github.com/Altonomega/Nexounel/releases/download/<version>/install.sh
 less install.sh
 sudo bash install.sh --mother    # mother server: server + panel
 sudo bash install.sh --node      # node server: node only
@@ -50,4 +50,4 @@ rotation. Details: [`docs/OPERATOR-GUIDE.md`](docs/OPERATOR-GUIDE.md).
 MIT license. See `LICENSE` for attribution. The WhiteDNS client apps are
 *not* part of this project and are not reused.
 
-Built by Mashani (MNSH-Nexo). License: MIT.
+Built by Mashani (Altonomega). License: MIT.

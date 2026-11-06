@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 	"golang.org/x/crypto/ssh"
 )
 

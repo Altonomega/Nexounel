@@ -3,7 +3,7 @@ package udpserver
 import (
 	"testing"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 func mustTestCodec(t *testing.T, key string) *security.Codec {

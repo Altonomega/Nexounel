@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"sort"
 
-	baseCodec "github.com/MNSH-Nexo/Nexounel/core/internal/basecodec"
-	Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+	baseCodec "github.com/Altonomega/Nexounel/core/internal/basecodec"
+	Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 )
 
 // UDPResponseLimit is the requestor's advertised DNS message size. Without

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/multisession"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/security"
+	"github.com/Altonomega/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/multisession"
+	"github.com/Altonomega/Nexounel/core/internal/security"
 )
 
 const scaleAuditTestKey = "0123456789abcdef0123456789abcdef"

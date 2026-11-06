@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MNSH-Nexo/Nexounel/core/internal/compression"
-	"github.com/MNSH-Nexo/Nexounel/core/internal/config"
+	"github.com/Altonomega/Nexounel/core/internal/compression"
+	"github.com/Altonomega/Nexounel/core/internal/config"
 )
 
 // Compression settings editing.

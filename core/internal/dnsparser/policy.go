@@ -7,7 +7,7 @@
 
 package dnsparser
 
-import Enums "github.com/MNSH-Nexo/Nexounel/core/internal/enums"
+import Enums "github.com/Altonomega/Nexounel/core/internal/enums"
 
 func IsSupportedTunnelDNSQuery(qType uint16, qClass uint16) bool {
 	if qClass != Enums.DNSQ_CLASS_IN {

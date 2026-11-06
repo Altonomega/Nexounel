@@ -42,7 +42,7 @@ and any download failure falls through to the next mirror. Configure
 the list with repeatable `--mirror URL` flags (prepended, first wins)
 or the `NEXOUNEL_MIRRORS` environment variable (comma-separated,
 replaces the defaults). Custom mirrors must serve the GitHub releases
-path layout (`.../MNSH-Nexo/Nexounel/releases/download/<version>/<artifact>`).
+path layout (`.../Altonomega/Nexounel/releases/download/<version>/<artifact>`).
 See the comment block at the top of `install.sh` for the format; add
 Iranian mirrors there by prepending their URLs, do not edit the
 defaults in place without verifying the host serves the artifacts.
