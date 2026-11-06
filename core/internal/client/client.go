@@ -408,25 +408,52 @@ func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Clie
 	return c, nil
 }
 
+// scopeCacheEntriesToConfigured returns the cache entries that belong to
+// the configured fleet. When the configured list is non-empty, only entries
+// for configured resolvers are kept: the cache accelerates the configured
+// fleet, it never expands it. When the configured list is empty, all
+// entries are kept (the cache is the only fleet source).
+func scopeCacheEntriesToConfigured(entries []ResolverCacheEntry, configured []config.ResolverAddress) []ResolverCacheEntry {
+	if len(configured) == 0 {
+		return entries
+	}
+	configuredSet := make(map[string]struct{}, len(configured))
+	for _, r := range configured {
+		configuredSet[r.IP+"|"+strconv.Itoa(r.Port)] = struct{}{}
+	}
+	scoped := make([]ResolverCacheEntry, 0, len(entries))
+	for _, e := range entries {
+		if _, ok := configuredSet[e.IP+"|"+strconv.Itoa(e.Port)]; ok {
+			scoped = append(scoped, e)
+		}
+	}
+	return scoped
+}
+
 // BootstrapFromLogs initializes a new Client using working resolvers recovered from
 // previous session logs. Cached MTUs are trusted outright when
 // LOG_BASED_MTU_VERIFY is false and cheaply verified (one probe per direction
 // at the cached sizes) when it is true; either way the full MTU scan runs
 // only for resolvers without a usable cache entry. When entries is empty it
 // falls back to the normal Bootstrap path.
+//
+// The cache is scoped to the configured resolver list: when the operator
+// explicitly configures a list, the cache is only a fast-start accelerator
+// for resolvers IN that list. A cache-only resolver must not expand the
+// fleet — otherwise a deliberate prune (for example to a 1000-resolver
+// subset chosen by measured capacity) is silently undone by 30 days of
+// stale cache entries, and the node re-probes the whole old fleet instead
+// of the pruned one. When the configured list is empty the cache is the
+// only fleet source, so the union is kept there.
 func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, overrides config.ClientConfigOverrides) (*Client, error) {
 	if len(entries) == 0 {
 		return Bootstrap(configPath, overrides)
 	}
 
-	// Union, not replace: the cache holds resolvers that worked in a past
-	// session, but the configured list may be newer or larger. Replacing
-	// the list with the cache would silently drop configured resolvers
-	// that have no cache entry yet — the hybrid scan in
-	// applyPreknownMTUsFromLog exists precisely to cover those, so they
-	// must survive into the connection map. Cached entries come first so
-	// the scanner's ranking is preserved; a caller-pinned resolver list
-	// (overrides.Resolvers) takes precedence over the file list.
+	// The configured list is the operator's explicit fleet. The cache only
+	// accelerates resolvers that are in it; it never expands the fleet.
+	// (A caller-pinned resolver list in overrides takes precedence over
+	// the file list.)
 	pinned := overrides.Resolvers
 	baseOverrides := overrides
 	baseOverrides.Resolvers = nil
@@ -438,6 +465,21 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 	if len(configured) == 0 {
 		configured = baseCfg.Resolvers
 	}
+	entries = scopeCacheEntriesToConfigured(entries, configured)
+	if len(entries) == 0 {
+		// No cache entry matches the configured fleet: there is nothing
+		// to fast-start from, so run the full probe.
+		return Bootstrap(configPath, overrides)
+	}
+
+	// Union, not replace: the cache holds resolvers that worked in a past
+	// session, but the configured list may be newer or larger. Replacing
+	// the list with the cache would silently drop configured resolvers
+	// that have no cache entry yet — the hybrid scan in
+	// applyPreknownMTUsFromLog exists precisely to cover those, so they
+	// must survive into the connection map. Cached entries come first so
+	// the scanner's ranking is preserved; a caller-pinned resolver list
+	// (overrides.Resolvers) takes precedence over the file list.
 	seen := make(map[string]struct{}, len(entries)+len(configured))
 	resolvers := make([]config.ResolverAddress, 0, len(entries)+len(configured))
 	for _, e := range entries {

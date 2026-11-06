@@ -441,10 +441,15 @@ func defaultServerConfig() ServerConfig {
 		ARQControlPacketTTLSeconds:        900.0,
 		ARQMaxDataRetries:                 800,
 		ARQDataNackMaxGap:                 0,
-		ARQDataNackInitialDelaySeconds:    0.4,
-		ARQDataNackRepeatSeconds:          1.0,
-		ARQTerminalDrainTimeoutSec:        90.0,
-		ARQTerminalAckWaitTimeoutSec:      60.0,
+		// ARQ repair experiment is ON by default (see the client-side
+		// note): with the flag on and the gap unset, finalize raises
+		// the server NACK gap to 64. Set ARQ_EXPERIMENT_ENABLED=false
+		// to restore the historical behaviour exactly.
+		ARQExperimentEnabled:           true,
+		ARQDataNackInitialDelaySeconds: 0.4,
+		ARQDataNackRepeatSeconds:       1.0,
+		ARQTerminalDrainTimeoutSec:     90.0,
+		ARQTerminalAckWaitTimeoutSec:   60.0,
 	}
 }
 

@@ -30,10 +30,15 @@ import (
 
 const (
 	pacerBaseInterval = 8 * time.Millisecond
-	// Cap on a single resolver's cooldown window. 400ms throttled a maxed-out
-	// resolver to ~2.5 queries/sec; 200ms (~5/sec) still redistributes load off a
-	// struggling resolver without starving aggregate throughput on lossy links.
-	pacerMaxInterval = 200 * time.Millisecond
+	// Cap on a single resolver's cooldown window. A rate-limited public
+	// resolver needs SECONDS to recover, not milliseconds: at 200ms a
+	// hammered resolver was re-admitted after ~5 queries/sec worth of
+	// cooldown and immediately re-limited, so the fleet collapsed
+	// group-by-group under sustained load. 8s gives a genuinely
+	// overloaded resolver time to shed its rate-limit state, while the
+	// x2 backoff still reaches the cap only after repeated overload
+	// signals and success halves the window back down quickly.
+	pacerMaxInterval = 8 * time.Second
 )
 
 type resolverPacer struct {

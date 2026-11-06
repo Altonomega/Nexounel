@@ -23,6 +23,8 @@ func TestResolverPacer_RecoveryKeepsPaceWithBackoff(t *testing.T) {
 
 	// Multiplicative recovery clears a maxed interval in a handful of successes,
 	// not hundreds — so a deprioritized resolver is not starved back to health.
+	// The bound scales with the cap (8s needs 10 halvings to fall below the
+	// 8ms base), so allow a couple of extra successes of margin.
 	successes := 0
 	for s.interval > 0 && successes < 100 {
 		p.success("r1")
@@ -31,7 +33,7 @@ func TestResolverPacer_RecoveryKeepsPaceWithBackoff(t *testing.T) {
 	if s.interval != 0 {
 		t.Fatalf("resolver still paced after %d successes (interval=%v)", successes, s.interval)
 	}
-	if successes > 10 {
+	if successes > 12 {
 		t.Fatalf("recovery too slow: %d successes to clear the cap", successes)
 	}
 

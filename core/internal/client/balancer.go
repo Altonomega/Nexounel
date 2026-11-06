@@ -625,6 +625,39 @@ func (b *Balancer) selectRandom(snap *balancerSnapshot, count int) []Connection 
 	return snapshotConnections(snap.connections, indices[:count])
 }
 
+// sentByIndex returns a resolver's recent send count (half-life decayed) from
+// the balancer stats. It is the load signal for fair-share selection: a
+// resolver that has recently carried many queries is "hot" and should be
+// picked less often until its count decays.
+func sentByIndex(snap *balancerSnapshot, idx int) uint64 {
+	stats := statsByIndex(snap, idx)
+	if stats == nil {
+		return 0
+	}
+	sent, _, _, _ := stats.snapshot()
+	return sent
+}
+
+// loadDiscountedWeight returns a resolver's MTU-goodput weight discounted by
+// its recent send load, so a resolver that has recently carried many queries
+// is picked less often and the load spreads across the pool instead of
+// concentrating on the same high-MTU resolvers. The discount is 1/(1+sent/100):
+// a resolver with 100 recent sends is halved, 500 sends is cut to a sixth.
+// At even load the discount is the same for everyone, so MTU still dominates
+// and the weight never drops below the floor of 1.
+func loadDiscountedWeight(snap *balancerSnapshot, idx int) uint64 {
+	w := mtuGoodputWeight(&snap.connections[idx])
+	sent := sentByIndex(snap, idx)
+	if sent == 0 {
+		return w
+	}
+	w = w / (1 + sent/100)
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
 func (b *Balancer) selectLowestScore(snap *balancerSnapshot, count int, scorer func(*balancerSnapshot, int) uint64) []Connection {
 	n := len(snap.valid)
 	if count <= 0 || n == 0 {
@@ -642,19 +675,24 @@ func (b *Balancer) selectLowestScore(snap *balancerSnapshot, count int, scorer f
 	type scoredIdx struct {
 		idx   int
 		score uint64
+		sent  uint64
 	}
 
 	ordered := b.rotatedValidIndices(snap, count)
 	scored := make([]scoredIdx, n)
 	for i, idx := range ordered {
-		scored[i] = scoredIdx{idx: idx, score: scorer(snap, idx)}
+		scored[i] = scoredIdx{idx: idx, score: scorer(snap, idx), sent: sentByIndex(snap, idx)}
 	}
 
-	// Simple selection sort for small 'count'
+	// Simple selection sort for small 'count'. Sort by (score, sent):
+	// prefer the lowest loss, and among equally-healthy resolvers prefer
+	// the least-loaded, so the pick spreads across the whole healthy pool
+	// instead of hammering the same "best" resolver until it rate-limits.
 	for i := 0; i < count && i < n; i++ {
 		minIdx := i
 		for j := i + 1; j < n; j++ {
-			if scored[j].score < scored[minIdx].score {
+			if scored[j].score < scored[minIdx].score ||
+				(scored[j].score == scored[minIdx].score && scored[j].sent < scored[minIdx].sent) {
 				minIdx = j
 			}
 		}
@@ -748,11 +786,16 @@ func (b *Balancer) bestScoredConnection(snap *balancerSnapshot, scorer func(*bal
 	ordered := b.rotatedValidIndices(snap, 1)
 	bestIndex := -1
 	var bestScore uint64
+	var bestSent uint64
 	for _, idx := range ordered {
 		score := scorer(snap, idx)
-		if bestIndex == -1 || score < bestScore {
+		sent := sentByIndex(snap, idx)
+		// Prefer the lowest score; among equal scores prefer the
+		// least-loaded, so a single "best" resolver is not hammered.
+		if bestIndex == -1 || score < bestScore || (score == bestScore && sent < bestSent) {
 			bestIndex = idx
 			bestScore = score
+			bestSent = sent
 		}
 	}
 	if bestIndex < 0 {
@@ -765,15 +808,18 @@ func (b *Balancer) bestScoredConnectionExcluding(snap *balancerSnapshot, scorer 
 	ordered := b.rotatedValidIndices(snap, 1)
 	bestIndex := -1
 	var bestScore uint64
+	var bestSent uint64
 	for _, idx := range ordered {
 		conn, ok := derefConnection(snap.connections, idx)
 		if !ok || conn.Key == excludeKey {
 			continue
 		}
 		score := scorer(snap, idx)
-		if bestIndex == -1 || score < bestScore {
+		sent := sentByIndex(snap, idx)
+		if bestIndex == -1 || score < bestScore || (score == bestScore && sent < bestSent) {
 			bestIndex = idx
 			bestScore = score
+			bestSent = sent
 		}
 	}
 	if bestIndex < 0 {
@@ -879,15 +925,17 @@ func mtuGoodputWeight(conn *Connection) uint64 {
 }
 
 // weightedByMTUConnection picks an active-pool resolver with probability
-// proportional to its effective download goodput (MTU × delivery rate). Falls
-// back to round-robin when there is no usable weight signal.
+// proportional to its effective download goodput (MTU × delivery rate),
+// discounted by its recent send load so the pick spreads across the pool
+// instead of concentrating on the same high-MTU resolvers. Falls back to
+// round-robin when there is no usable weight signal.
 func (b *Balancer) weightedByMTUConnection(snap *balancerSnapshot) (Connection, bool) {
 	if snap == nil || len(snap.valid) == 0 {
 		return Connection{}, false
 	}
 	total := uint64(0)
 	for _, idx := range snap.valid {
-		total += mtuGoodputWeight(&snap.connections[idx])
+		total += loadDiscountedWeight(snap, idx)
 	}
 	if total == 0 {
 		return b.roundRobinBestConnection(snap)
@@ -895,7 +943,7 @@ func (b *Balancer) weightedByMTUConnection(snap *balancerSnapshot) (Connection, 
 
 	r := b.nextRandom() % total
 	for _, idx := range snap.valid {
-		w := mtuGoodputWeight(&snap.connections[idx])
+		w := loadDiscountedWeight(snap, idx)
 		if r < w {
 			return derefConnection(snap.connections, idx)
 		}

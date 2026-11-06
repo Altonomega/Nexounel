@@ -47,7 +47,19 @@ type resolverAutoDisableCandidate struct {
 	span           time.Duration
 	oldestAge      time.Duration
 	timeoutOnlyAge time.Duration
+	cause          string
 }
+
+// autoDisableLossPerMilleThreshold is the sustained packet-loss rate (parts per
+// 1000) at which a resolver is pruned even without a pure-timeout window. A
+// resolver that answers but drops >=80% of queries is rate-limited, not dead —
+// it is disabled, cooled down, and re-probed like a timeout-only resolver, so
+// it rejoins automatically once it recovers.
+const autoDisableLossPerMilleThreshold = 800
+
+// autoDisableLossMinObservations is the minimum sends before a loss rate is
+// trusted enough to prune on.
+const autoDisableLossMinObservations = 20
 
 const runtimeDisabledResolverReactivationSuccessThreshold = 2
 
@@ -369,6 +381,27 @@ func (c *Client) pruneResolverHealthLocked(state *resolverHealthState, now time.
 	state.Events = append(state.Events[:0], state.Events[dropCount:]...)
 }
 
+// resolverLossPerMille reports a resolver's sustained packet-loss rate (parts
+// per 1000) from the balancer's send/ack counters, with the number of sends
+// observed. ok is false when there are no samples yet.
+func (c *Client) resolverLossPerMille(key string) (lossPerMille uint64, sent uint64, ok bool) {
+	if c == nil || c.balancer == nil || key == "" {
+		return 0, 0, false
+	}
+	stats := c.balancer.statsForKey(key)
+	if stats == nil {
+		return 0, 0, false
+	}
+	sent, acked, _, _ := stats.snapshot()
+	if sent == 0 {
+		return 0, 0, false
+	}
+	if acked >= sent {
+		return 0, sent, true
+	}
+	return (sent - acked) * 1000 / sent, sent, true
+}
+
 func (c *Client) runResolverAutoDisable(now time.Time) {
 	if c == nil || !c.cfg.AutoDisableTimeoutServers {
 		return
@@ -377,34 +410,67 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 	window := c.autoDisableTimeoutWindow()
 	debugEnabled := c.resolverHealthDebugEnabled()
 	candidates := make([]resolverAutoDisableCandidate, 0, len(c.connections))
+	seen := make(map[string]struct{}, len(c.connections))
 	snap := c.resolverHealthBalancerSnapshot()
 	c.resolverHealthMu.Lock()
-	for key, state := range c.resolverHealth {
-		if state == nil {
+	// Check every currently-valid resolver, not only ones with timeout
+	// events: a rate-limited resolver answers (so it never builds a
+	// timeout-only window) while dropping most queries, and that
+	// sustained loss is exactly what collapses a session under load.
+	validKeys := make([]string, 0, len(c.connections))
+	if snap != nil {
+		for _, idx := range snap.valid {
+			if idx < 0 || idx >= len(snap.connections) {
+				continue
+			}
+			if key := snap.connections[idx].Key; key != "" {
+				validKeys = append(validKeys, key)
+			}
+		}
+	}
+	if len(validKeys) == 0 {
+		for key, state := range c.resolverHealth {
+			if state == nil {
+				continue
+			}
+			if c.resolverConnectionIsValidFromSnapshot(snap, key) {
+				validKeys = append(validKeys, key)
+			}
+		}
+	}
+	for _, key := range validKeys {
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		c.pruneResolverHealthLocked(state, now)
-		if !c.resolverConnectionIsValidFromSnapshot(snap, key) {
-			continue
+		state := c.resolverHealth[key]
+		if state != nil {
+			c.pruneResolverHealthLocked(state, now)
 		}
-		if len(state.Events) < c.autoDisableMinObservations() {
-			continue
+		// Criterion 1 (existing): 100% timeout over a mature window.
+		if state != nil && len(state.Events) >= c.autoDisableMinObservations() && !state.TimeoutOnlySince.IsZero() {
+			if timeoutOnlyAge := now.Sub(state.TimeoutOnlySince); timeoutOnlyAge >= window {
+				candidate := resolverAutoDisableCandidate{key: key, cause: "100% timeout window"}
+				if debugEnabled {
+					candidate.eventCount = len(state.Events)
+					candidate.span = state.Events[len(state.Events)-1].At.Sub(state.Events[0].At)
+					candidate.oldestAge = now.Sub(state.Events[0].At)
+					candidate.timeoutOnlyAge = timeoutOnlyAge
+				}
+				candidates = append(candidates, candidate)
+				seen[key] = struct{}{}
+				continue
+			}
 		}
-		if state.TimeoutOnlySince.IsZero() {
-			continue
+		// Criterion 2 (loss-based): sustained high loss over enough
+		// observations. This catches resolvers that still answer (so
+		// no timeout-only window forms) but drop most queries — the
+		// rate-limited state that suffocates a session. It reuses the
+		// same disable + cooldown + recheck + rejoin path, so a
+		// pruned resolver returns automatically once it recovers.
+		if loss, sent, ok := c.resolverLossPerMille(key); ok && sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
+			candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "sustained loss"})
+			seen[key] = struct{}{}
 		}
-		timeoutOnlyAge := now.Sub(state.TimeoutOnlySince)
-		if timeoutOnlyAge < window {
-			continue
-		}
-		candidate := resolverAutoDisableCandidate{key: key}
-		if debugEnabled {
-			candidate.eventCount = len(state.Events)
-			candidate.span = state.Events[len(state.Events)-1].At.Sub(state.Events[0].At)
-			candidate.oldestAge = now.Sub(state.Events[0].At)
-			candidate.timeoutOnlyAge = timeoutOnlyAge
-		}
-		candidates = append(candidates, candidate)
 	}
 	c.resolverHealthMu.Unlock()
 
@@ -435,7 +501,11 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		if !c.canDisableResolverConnection(candidate.key) {
 			continue
 		}
-		c.disableResolverConnection(candidate.key, "100% timeout window")
+		cause := candidate.cause
+		if cause == "" {
+			cause = "100% timeout window"
+		}
+		c.disableResolverConnection(candidate.key, cause)
 	}
 }
 

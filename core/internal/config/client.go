@@ -574,11 +574,17 @@ func defaultClientConfig() ClientConfig {
 		// scan. 600s still tolerates genuinely idle-but-alive connections (a
 		// slow-but-progressing stream keeps resetting its activity clock and is
 		// never reaped) while draining dead ones ~3x sooner.
-		ARQInactivityTimeoutSeconds:    600.0,
-		ARQDataPacketTTLSeconds:        2400.0,
-		ARQControlPacketTTLSeconds:     1200.0,
-		ARQMaxDataRetries:              120,
-		ARQDataNackMaxGap:              64,
+		ARQInactivityTimeoutSeconds: 600.0,
+		ARQDataPacketTTLSeconds:     2400.0,
+		ARQControlPacketTTLSeconds:  1200.0,
+		ARQMaxDataRetries:           120,
+		ARQDataNackMaxGap:           64,
+		// ARQ repair experiment is ON by default: server NACK gap, single
+		// RESEND/ACK-NACK duplication, and the retransmit budget reduce
+		// wasted duplicate queries (the largest query sink). Setting
+		// ARQ_EXPERIMENT_ENABLED=false restores the historical behaviour
+		// exactly (see docs/ARQ-PROTOTYPE.md off-identical proof).
+		ARQExperimentEnabled:           true,
 		ARQDataNackInitialDelaySeconds: 0.4,
 		ARQDataNackRepeatSeconds:       0.8,
 		ARQTerminalDrainTimeoutSec:     120.0,

@@ -63,7 +63,7 @@ func findScaleAuditConnection(t *testing.T, c *Client, resolver, domain string) 
 	return nil
 }
 
-func TestBootstrapFromLogsUnionsConfiguredResolvers(t *testing.T) {
+func TestBootstrapFromLogsScopesCacheToConfiguredList(t *testing.T) {
 	dir := t.TempDir()
 	configPath, resolversPath := writeScaleAuditTestConfig(t, dir)
 	now := time.Now().UTC()
@@ -79,13 +79,15 @@ func TestBootstrapFromLogsUnionsConfiguredResolvers(t *testing.T) {
 	}
 	defer c.closeResolverCacheLog()
 
-	// Union: cached resolvers first (ranked order), then configured
-	// resolvers with no cache entry. Nothing configured is dropped.
-	if len(c.cfg.Resolvers) != 3 {
-		t.Fatalf("union resolver list = %+v, want 3 entries", c.cfg.Resolvers)
+	// Scoped to the configured list (8.8.8.8, 1.1.1.1): the cache-only
+	// resolver 9.9.9.9 must NOT expand the fleet, or a deliberate prune
+	// (e.g. to a capacity-chosen subset) is silently undone by stale
+	// cache entries. Nothing configured is dropped.
+	if len(c.cfg.Resolvers) != 2 {
+		t.Fatalf("scoped resolver list = %+v, want 2 entries", c.cfg.Resolvers)
 	}
-	if c.cfg.Resolvers[0].IP != "8.8.8.8" || c.cfg.Resolvers[1].IP != "9.9.9.9" || c.cfg.Resolvers[2].IP != "1.1.1.1" {
-		t.Fatalf("unexpected union order: %+v", c.cfg.Resolvers)
+	if c.cfg.Resolvers[0].IP != "8.8.8.8" || c.cfg.Resolvers[1].IP != "1.1.1.1" {
+		t.Fatalf("unexpected scoped order: %+v", c.cfg.Resolvers)
 	}
 	if !c.connectionsHavePreknownMTU {
 		t.Fatal("BootstrapFromLogs must set connectionsHavePreknownMTU")
@@ -98,16 +100,73 @@ func TestBootstrapFromLogsUnionsConfiguredResolvers(t *testing.T) {
 	if !cached.IsValid || cached.UploadMTUBytes != 110 || cached.DownloadMTUBytes != 2000 {
 		t.Fatalf("cached connection not pre-filled: %+v", *cached)
 	}
-	cachedOnly := findScaleAuditConnection(t, c, "9.9.9.9", "a.example.com")
-	if !cachedOnly.IsValid || cachedOnly.UploadMTUBytes != 90 || cachedOnly.DownloadMTUBytes != 1015 {
-		t.Fatalf("cache-only connection not pre-filled: %+v", *cachedOnly)
-	}
 	uncached := findScaleAuditConnection(t, c, "1.1.1.1", "a.example.com")
 	// Fresh connections default to IsValid=true with zero MTUs (the scan
 	// resets them); "unscanned" is defined by the zero MTUs, matching the
 	// connectionsWithoutPreknownMTU predicate.
 	if uncached.UploadMTUBytes != 0 || uncached.DownloadMTUBytes != 0 {
 		t.Fatalf("uncached connection must stay unscanned: %+v", *uncached)
+	}
+	// The cache-only resolver must not be in the connection map at all.
+	for i := range c.connections {
+		if c.connections[i].Resolver == "9.9.9.9" {
+			t.Fatal("cache-only resolver 9.9.9.9 must not be in the fleet")
+		}
+	}
+}
+
+// Unit test for the scoping helper: with a configured fleet, only entries
+// for configured resolvers are kept; with no configured fleet, all entries
+// are kept (the cache is the only fleet source).
+func TestScopeCacheEntriesToConfigured(t *testing.T) {
+	now := time.Now().UTC()
+	entries := []ResolverCacheEntry{
+		{IP: "8.8.8.8", Port: 53, Domain: "a.example.com", UploadMTU: 110, DownloadMTU: 2000, LastSeen: now},
+		{IP: "9.9.9.9", Port: 53, Domain: "a.example.com", UploadMTU: 90, DownloadMTU: 1015, LastSeen: now},
+		{IP: "1.1.1.1", Port: 53, Domain: "a.example.com", UploadMTU: 110, DownloadMTU: 2000, LastSeen: now},
+	}
+	configured := []config.ResolverAddress{{IP: "8.8.8.8", Port: 53}, {IP: "1.1.1.1", Port: 53}}
+	scoped := scopeCacheEntriesToConfigured(entries, configured)
+	if len(scoped) != 2 {
+		t.Fatalf("scoped entries = %d, want 2 (8.8.8.8 and 1.1.1.1)", len(scoped))
+	}
+	for _, e := range scoped {
+		if e.IP == "9.9.9.9" {
+			t.Fatal("cache-only resolver 9.9.9.9 must be scoped out")
+		}
+	}
+	// Empty configured list: the cache is the fleet, keep everything.
+	unscoped := scopeCacheEntriesToConfigured(entries, nil)
+	if len(unscoped) != 3 {
+		t.Fatalf("empty configured list: entries = %d, want 3", len(unscoped))
+	}
+	// A port mismatch is a different resolver and must be scoped out.
+	otherPort := []config.ResolverAddress{{IP: "8.8.8.8", Port: 5353}}
+	if got := scopeCacheEntriesToConfigured(entries, otherPort); len(got) != 0 {
+		t.Fatalf("port-mismatched entry must be scoped out, got %d", len(got))
+	}
+}
+
+// When no cache entry matches the configured fleet, there is nothing to
+// fast-start from, so the plain Bootstrap (full probe) runs instead.
+func TestBootstrapFromLogsNoCacheMatchFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	configPath, resolversPath := writeScaleAuditTestConfig(t, dir)
+	now := time.Now().UTC()
+	entries := []ResolverCacheEntry{
+		{IP: "9.9.9.9", Port: 53, Domain: "a.example.com", UploadMTU: 90, DownloadMTU: 1015, LastSeen: now},
+		{IP: "4.4.4.4", Port: 53, Domain: "a.example.com", UploadMTU: 90, DownloadMTU: 1015, LastSeen: now},
+	}
+	c, err := BootstrapFromLogs(configPath, entries, config.ClientConfigOverrides{ResolversFilePath: &resolversPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.closeResolverCacheLog()
+	if c.connectionsHavePreknownMTU {
+		t.Fatal("no cache match must fall back to the plain Bootstrap path")
+	}
+	if len(c.cfg.Resolvers) != 2 {
+		t.Fatalf("fallback resolver list = %+v, want the 2 file resolvers", c.cfg.Resolvers)
 	}
 }
 

@@ -35,8 +35,10 @@ func finalizeTestClientConfig(t *testing.T, cfg ClientConfig) ClientConfig {
 }
 
 func TestFinalizeServerConfigExperimentNackGap(t *testing.T) {
-	// Flag off: the historical default (server NACKs disabled).
-	off, err := finalizeServerConfig(defaultServerConfig())
+	// Flag off (explicit): the historical default (server NACKs disabled).
+	offCfg := defaultServerConfig()
+	offCfg.ARQExperimentEnabled = false
+	off, err := finalizeServerConfig(offCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +46,11 @@ func TestFinalizeServerConfigExperimentNackGap(t *testing.T) {
 		t.Fatalf("experiment off: gap=%d want=0", off.ARQDataNackMaxGap)
 	}
 
-	// Flag on, gap unset: the experiment default of 64.
+	// Flag on (the default), gap unset: the experiment default of 64.
 	on := defaultServerConfig()
-	on.ARQExperimentEnabled = true
+	if !on.ARQExperimentEnabled {
+		t.Fatal("experiment flag must default on")
+	}
 	got, err := finalizeServerConfig(on)
 	if err != nil {
 		t.Fatal(err)
@@ -122,11 +126,13 @@ func TestFinalizeConfigExperimentBudgetClamps(t *testing.T) {
 }
 
 func TestFinalizeClientConfigExperimentDefaultsInert(t *testing.T) {
-	// With the flag off, the experiment keys keep their zero
-	// (inherit/unlimited) meaning through finalize.
+	// Default: the experiment is ON. The experiment keys keep their zero
+	// (inherit/unlimited) meaning in the config through finalize; the
+	// on-values (RESEND/ACK-NACK duplication 1, retransmit budget 64) are
+	// resolved at use time, not by rewriting the keys.
 	cfg := finalizeTestClientConfig(t, defaultClientConfig())
-	if cfg.ARQExperimentEnabled {
-		t.Fatal("experiment flag must default off")
+	if !cfg.ARQExperimentEnabled {
+		t.Fatal("experiment flag must default on")
 	}
 	if cfg.ARQResendDuplicationCount != 0 || cfg.ARQAckNackDuplicationCount != 0 || cfg.ARQRetransmitBudget != 0 {
 		t.Fatalf("experiment keys must default to 0: resend=%d acknack=%d budget=%d",
@@ -135,5 +141,18 @@ func TestFinalizeClientConfigExperimentDefaultsInert(t *testing.T) {
 	// The client NACK gap default is untouched by the experiment.
 	if cfg.ARQDataNackMaxGap != 64 {
 		t.Fatalf("client NACK gap default: got=%d want=64", cfg.ARQDataNackMaxGap)
+	}
+
+	// Explicitly off: the flag stays off and the keys stay inert (the
+	// historical behaviour is preserved when the flag is off).
+	offCfg := defaultClientConfig()
+	offCfg.ARQExperimentEnabled = false
+	off := finalizeTestClientConfig(t, offCfg)
+	if off.ARQExperimentEnabled {
+		t.Fatal("explicitly-off experiment flag must stay off")
+	}
+	if off.ARQResendDuplicationCount != 0 || off.ARQAckNackDuplicationCount != 0 || off.ARQRetransmitBudget != 0 {
+		t.Fatalf("experiment off: keys must stay 0: resend=%d acknack=%d budget=%d",
+			off.ARQResendDuplicationCount, off.ARQAckNackDuplicationCount, off.ARQRetransmitBudget)
 	}
 }
