@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"net/http"
+	"runtime/debug"
 )
 
 const panelCSS = `:root{
@@ -241,7 +242,7 @@ const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
 {{if .Message}}<p class="ok">{{.Message}}</p>{{end}}
 {{template "content" .}}
 </main>
-<footer>Local administration panel. Keep the secret path and admin credentials private.</footer>
+<footer>Local administration panel. Keep the secret path and admin credentials private.{{if .BuildVersion}} &middot; Build {{.BuildVersion}}{{end}}</footer>
 </div>
 </div>
 {{else}}
@@ -256,7 +257,7 @@ const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
 {{if .Message}}<p class="ok">{{.Message}}</p>{{end}}
 {{template "content" .}}
 </div>
-<p class="login-foot">Local administration panel. Keep the secret path and admin credentials private.</p>
+<p class="login-foot">Local administration panel. Keep the secret path and admin credentials private.{{if .BuildVersion}} &middot; Build {{.BuildVersion}}{{end}}</p>
 </div>
 {{end}}
 </body>
@@ -653,6 +654,31 @@ type PageData struct {
 	Message       string
 	Refresh       bool
 	Content       any
+	// BuildVersion identifies the running panel binary (short VCS
+	// revision, e.g. "53ddf08"; "dev" when no revision is stamped).
+	// Rendered in the footer so the operator can prove which build
+	// is serving the page.
+	BuildVersion string
+}
+
+// buildVersion returns a short identifier for the running panel binary,
+// from the VCS revision stamped into the binary at build time (Go 1.18+
+// stamps vcs.revision when building from a git checkout). It returns
+// "dev" when no revision is available (e.g. built outside a checkout).
+// The footer renders it so the operator can prove which build is serving
+// the page — the answer to "am I looking at the new panel or a cached
+// old one?".
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 9 {
+			return s.Value[:9]
+		}
+	}
+	return "dev"
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data PageData) {
@@ -676,6 +702,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 	}
 	if data.WebPath == "" {
 		data.WebPath = s.cfg.WebPath
+	}
+	if data.BuildVersion == "" {
+		data.BuildVersion = buildVersion()
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {

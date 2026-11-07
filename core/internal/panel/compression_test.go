@@ -501,3 +501,111 @@ func TestApplyCompressionSettingsBadEditNeverReplaces(t *testing.T) {
 		t.Fatal("a .bak was written for a rejected node edit")
 	}
 }
+
+// TestApplyCompressionSettingsCreatesMissingNodeConfig proves the panel
+// apply does not fail closed when the node config file is absent on the
+// mother (the installer does not ship it yet): the panel creates it
+// with the compression defaults (LZ4, dictionaries off) and the apply
+// then takes effect on both files.
+func TestApplyCompressionSettingsCreatesMissingNodeConfig(t *testing.T) {
+	dir := t.TempDir()
+	serverPath := filepath.Join(dir, "nexounel-server.toml")
+	nodePath := filepath.Join(dir, "nexounel-node.toml")
+	if err := os.WriteFile(serverPath, []byte(fixtureServerConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately do NOT create the node file.
+	update := CompressionSettingsUpdate{DictEnabled: boolPtr(true), Level: intPtr(9), LongEnabled: boolPtr(false)}
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, update); err != nil {
+		t.Fatalf("apply with missing node config failed: %v", err)
+	}
+	// The node file now exists, is 0600, and carries the applied settings.
+	info, err := os.Stat(nodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("created node config mode %o, want 0600", info.Mode().Perm())
+	}
+	nc, err := loadNodeCompressionFile(nodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nc.DictEnabled || nc.Level != 9 || nc.LongEnabled {
+		t.Fatalf("node settings after apply: %+v", nc)
+	}
+	raw, _ := os.ReadFile(nodePath)
+	if !strings.Contains(string(raw), "UPLOAD_COMPRESSION_TYPE = 1") || !strings.Contains(string(raw), "DOWNLOAD_COMPRESSION_TYPE = 1") {
+		t.Fatalf("created node file lacks the applied types:\n%s", raw)
+	}
+	// A second apply with the node file present still works, and
+	// disabling restores LZ4 (2).
+	if err := ApplyCompressionSettingsUpdate(serverPath, nodePath, CompressionSettingsUpdate{DictEnabled: boolPtr(false)}); err != nil {
+		t.Fatalf("second apply failed: %v", err)
+	}
+	nc2, err := loadNodeCompressionFile(nodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nc2.DictEnabled {
+		t.Fatalf("node settings after disable: %+v", nc2)
+	}
+	raw2, _ := os.ReadFile(nodePath)
+	if !strings.Contains(string(raw2), "UPLOAD_COMPRESSION_TYPE = 2") || !strings.Contains(string(raw2), "DOWNLOAD_COMPRESSION_TYPE = 2") {
+		t.Fatalf("node file after disable lacks LZ4 types:\n%s", raw2)
+	}
+}
+
+// TestEnsureNodeConfigFile creates the file when absent (0600, with the
+// compression defaults) and leaves an existing file byte-identical.
+func TestEnsureNodeConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nexounel-node.toml")
+	if err := ensureNodeConfigFile(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "ZSTD_DICT_ENABLED = false") || !strings.Contains(string(raw), "DOWNLOAD_COMPRESSION_TYPE = 2") {
+		t.Fatalf("created node config lacks the defaults:\n%s", raw)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("created node config mode %o, want 0600", info.Mode().Perm())
+	}
+	// The created file loads leniently with the defaults.
+	got, err := loadNodeCompressionFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DictEnabled || got.Level != 0 || got.LongEnabled {
+		t.Fatalf("created node config settings: %+v, want defaults", got)
+	}
+	// An existing file is left byte-identical.
+	before := []byte("# custom\nZSTD_DICT_ENABLED = true\nZSTD_LEVEL = 5\nZSTD_LONG_ENABLED = true\n")
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureNodeConfigFile(path); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("existing node config was modified:\n%s", after)
+	}
+}
+
+// TestLoadNodeCompressionFileMissingReturnsDefaults pins that a missing
+// node config file reads as the compression defaults (not an error),
+// so a panel status read does not fail closed either.
+func TestLoadNodeCompressionFileMissingReturnsDefaults(t *testing.T) {
+	got, err := loadNodeCompressionFile(filepath.Join(t.TempDir(), "nexounel-node.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DictEnabled || got.Level != 0 || got.LongEnabled {
+		t.Fatalf("missing node config settings: %+v, want defaults", got)
+	}
+}

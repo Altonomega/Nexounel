@@ -295,3 +295,43 @@ func TestTopologyView(t *testing.T) {
 		t.Errorf("6th node pos=%q inScene=%v, want topo-pos-5/true", got.Nodes[5].PosClass, got.Nodes[5].InScene)
 	}
 }
+
+// TestFooterShowsBuildVersion proves the panel footer identifies the
+// running binary (short VCS revision), so the operator can tell
+// whether they are looking at the new panel or a cached old one.
+// The login page carries it too — the login page is what the operator
+// sees before authenticating, so it must prove the build as well.
+func TestFooterShowsBuildVersion(t *testing.T) {
+	v := buildVersion()
+	if v == "" {
+		t.Fatal("buildVersion() returned empty")
+	}
+	s := &Server{}
+	// Login page (unauthenticated footer).
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/x/login", nil)
+	s.render(w, req, "login", PageData{Title: "Log in", WebPath: "/x", CSRFToken: "t"})
+	body := w.Body.String()
+	if !strings.Contains(body, "Build "+v) {
+		t.Fatalf("login page lacks the build version %q in its footer", v)
+	}
+	// Authenticated dashboard footer.
+	s2 := &Server{}
+	content := statusContent{Health: ServerHealth{Up: true}}
+	content.Topology = topologyView(content.Health, content.Sessions, content.Mesh)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/x/status", nil)
+	s2.render(w2, req2, "status", PageData{Title: "Dashboard", WebPath: "/x", Authenticated: true, Username: "admin", CSRFToken: "t", Content: content})
+	body2 := w2.Body.String()
+	if !strings.Contains(body2, "Build "+v) {
+		t.Fatalf("dashboard lacks the build version %q in its footer", v)
+	}
+}
+
+// TestBuildVersionNonEmpty pins that buildVersion() always returns a
+// usable identifier ("dev" when no VCS revision is stamped).
+func TestBuildVersionNonEmpty(t *testing.T) {
+	if v := buildVersion(); v == "" {
+		t.Fatal("buildVersion() returned empty")
+	}
+}

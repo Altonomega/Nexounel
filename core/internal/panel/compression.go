@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/Altonomega/Nexounel/core/internal/compression"
 	"github.com/Altonomega/Nexounel/core/internal/config"
 )
@@ -359,6 +360,41 @@ func requireServerZSTDSupport(path string) error {
 	return nil
 }
 
+// defaultNodeConfigContent is the minimal node config the panel creates
+// when the node config file is absent. It holds only the five keys the
+// panel manages (the three ZSTD_* keys plus the two negotiated
+// compression-type keys) at their defaults (LZ4, dictionaries off) —
+// the same defaults defaultClientConfig() uses. This file is the panel's
+// shadow copy on the mother; the node itself runs from its own config
+// on the node host. The installer should ship a full node config
+// eventually; until then the panel must not fail closed on a missing
+// file — it creates this one and proceeds.
+const defaultNodeConfigContent = `# Created by the Nexounel panel: the node config file was absent, so the
+# panel created it with the compression defaults (LZ4, dictionaries off).
+# The panel manages only the ZSTD_* and compression-type keys in this file.
+ZSTD_DICT_ENABLED = false
+ZSTD_LEVEL = 0
+ZSTD_LONG_ENABLED = false
+UPLOAD_COMPRESSION_TYPE = 2
+DOWNLOAD_COMPRESSION_TYPE = 2
+`
+
+// ensureNodeConfigFile creates the node config file with the compression
+// defaults when it is absent, so a panel apply does not fail closed on
+// a missing file. An existing file is left untouched. Any other error
+// (e.g. a permission error) is returned so the panel can show it.
+func ensureNodeConfigFile(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat node config %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(defaultNodeConfigContent), 0o600); err != nil {
+		return fmt.Errorf("create node config %s: %w", path, err)
+	}
+	return nil
+}
+
 // ApplyCompressionSettingsUpdate applies update to BOTH the server
 // config file and the node config file. Both files are read, edited
 // in memory and reload-validated BEFORE either is installed, so a
@@ -370,6 +406,13 @@ func requireServerZSTDSupport(path string) error {
 // enabling dictionaries is refused when the server's resolved
 // SUPPORTED_* lists exclude zstd.
 func ApplyCompressionSettingsUpdate(serverPath, nodePath string, update CompressionSettingsUpdate) error {
+	// The node config file may not exist on the mother (the installer
+	// does not ship it yet). Create it with the compression defaults
+	// instead of failing closed; a real error (e.g. permission) is
+	// still returned and shown in the panel.
+	if err := ensureNodeConfigFile(nodePath); err != nil {
+		return fmt.Errorf("node config: %w", err)
+	}
 	serverCurrent, err := loadServerCompressionSettings(serverPath)
 	if err != nil {
 		return fmt.Errorf("server config: %w", err)
@@ -384,7 +427,12 @@ func ApplyCompressionSettingsUpdate(serverPath, nodePath string, update Compress
 			return err
 		}, edit: editCompressionLines, isServer: true},
 		{path: nodePath, current: nodeCurrent, load: func(p string) error {
-			_, err := config.LoadClientConfig(p)
+			// Lenient: the node file on the mother is the panel's
+			// shadow copy, not a runnable node config — validate
+			// that it parses and the compression keys are valid,
+			// not that it could run a node (see
+			// loadNodeCompressionFile).
+			_, err := loadNodeCompressionFile(p)
 			return err
 		}, edit: editNodeCompressionLines},
 	}
@@ -436,10 +484,57 @@ func loadServerCompressionSettings(path string) (CompressionSettings, error) {
 	return CompressionSettings{DictEnabled: cfg.ZSTDDictEnabled, Level: cfg.ZSTDLevel, LongEnabled: cfg.ZSTDLongEnabled}, nil
 }
 
-func loadNodeCompressionSettings(path string) (CompressionSettings, error) {
-	cfg, err := config.LoadClientConfig(path)
-	if err != nil {
+// nodeCompressionKeys is the lenient view of a node config: only the
+// five keys the panel manages. The node config file on the mother is
+// the panel's shadow copy — it is not a complete runnable node config
+// (a runnable node config needs an encryption key, domains, and a
+// resolvers file, which live on the node host), so a full
+// LoadClientConfig is the wrong validator here: it rejects a shadow
+// file for missing keys the panel never manages. Decoding just these
+// five keys lets the panel work with the shadow file, and a missing
+// file reads as the compression defaults.
+type nodeCompressionKeys struct {
+	ZSTDDictEnabled       bool `toml:"ZSTD_DICT_ENABLED"`
+	ZSTDLevel             int  `toml:"ZSTD_LEVEL"`
+	ZSTDLongEnabled       bool `toml:"ZSTD_LONG_ENABLED"`
+	UploadCompressionType int  `toml:"UPLOAD_COMPRESSION_TYPE"`
+	DownloadCompressionType int `toml:"DOWNLOAD_COMPRESSION_TYPE"`
+}
+
+// loadNodeCompressionFile reads the five panel-managed keys from a node
+// config file. A missing file reads as the compression defaults
+// (LZ4, dictionaries off) — the caller creates the file with
+// ensureNodeConfigFile before editing. A malformed file, or a
+// compression value out of range, is a real error.
+func loadNodeCompressionFile(path string) (CompressionSettings, error) {
+	var keys nodeCompressionKeys
+	// Defaults for keys the file omits: the documented LZ4 types.
+	keys.UploadCompressionType = compression.TypeLZ4
+	keys.DownloadCompressionType = compression.TypeLZ4
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return CompressionSettings{}, nil
+		}
+		return CompressionSettings{}, fmt.Errorf("stat node config %s: %w", path, err)
+	}
+	if _, err := toml.DecodeFile(path, &keys); err != nil {
+		return CompressionSettings{}, fmt.Errorf("parse node config %s: %w", path, err)
+	}
+	settings := CompressionSettings{DictEnabled: keys.ZSTDDictEnabled, Level: keys.ZSTDLevel, LongEnabled: keys.ZSTDLongEnabled}
+	if err := settings.validate(); err != nil {
 		return CompressionSettings{}, err
 	}
-	return CompressionSettings{DictEnabled: cfg.ZSTDDictEnabled, Level: cfg.ZSTDLevel, LongEnabled: cfg.ZSTDLongEnabled}, nil
+	// The compression-type keys are NOT validated here: the apply
+	// overwrites them with the derived values (1/ZSTD on enable,
+	// 2/LZ4 on disable), so a hand-set custom type in the file is
+	// replaced, not rejected. (A test pins this: a file with
+	// DOWNLOAD_COMPRESSION_TYPE = 3 must still apply, and the
+	// apply restores it to 2.)
+	return settings, nil
+}
+
+// loadNodeCompressionSettings reads the current compression settings
+// from the node config file, leniently (see loadNodeCompressionFile).
+func loadNodeCompressionSettings(path string) (CompressionSettings, error) {
+	return loadNodeCompressionFile(path)
 }

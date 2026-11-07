@@ -184,6 +184,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// Never cache the redirect: see requireAuth.
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	http.Redirect(w, r, s.cfg.WebPath+"/status", http.StatusFound)
 }
 
@@ -242,6 +245,11 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess := s.sessionFromRequest(r)
 		if sess == nil || !sess.Authenticated || sess.Username != s.cfg.Username {
+			// Never cache the redirect to the login page: a cached
+			// 302 would keep sending the operator to a stale login
+			// page after a new panel binary is deployed.
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
 			http.Redirect(w, r, s.cfg.WebPath+"/login", http.StatusFound)
 			return
 		}
