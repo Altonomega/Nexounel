@@ -125,7 +125,10 @@ printf 'Building nexounel-node (%s)...\n' "$VERSION"
 printf 'Building nexounel-panel (%s)...\n' "$VERSION"
 (cd "$REPO_ROOT/core" && go build -trimpath -ldflags "$LDFLAGS" -o "$STAGING/nexounel-panel" ./cmd/nexounel-panel) \
     || die "go build failed for nexounel-panel"
-chmod 755 "$STAGING/nexounel-server" "$STAGING/nexounel-node" "$STAGING/nexounel-panel"
+printf 'Building nexounel (%s)...\n' "$VERSION"
+(cd "$REPO_ROOT/core" && go build -trimpath -ldflags "$LDFLAGS" -o "$STAGING/nexounel" ./cmd/nexounel) \
+    || die "go build failed for nexounel"
+chmod 755 "$STAGING/nexounel-server" "$STAGING/nexounel-node" "$STAGING/nexounel-panel" "$STAGING/nexounel"
 
 cp -a "$REPO_ROOT/core/configs/nexounel-server.toml" "$REPO_ROOT/core/configs/nexounel-node.toml" "$REPO_ROOT/core/configs/nodes.toml.example" "$REPO_ROOT/core/configs/client_resolvers.txt" "$STAGING/configs/"
 cp -a "$REPO_ROOT/install/units/nexounel.service" "$REPO_ROOT/install/units/nexounel-node.service" "$REPO_ROOT/install/units/nexounel-panel.service" "$STAGING/units/"
@@ -144,7 +147,7 @@ VERIFY_DIR="$(mktemp -d)"
 tar -xzf "$TARBALL_PATH" -C "$VERIFY_DIR"
 printf 'Tarball contents:\n'
 tar -tzf "$TARBALL_PATH"
-for binary in nexounel-server nexounel-node nexounel-panel; do
+for binary in nexounel-server nexounel-node nexounel-panel nexounel; do
     "$VERIFY_DIR/$TOP_DIR/$binary" -version || die "verification failed: $binary -version did not exit 0"
 done
 (cd "$OUT_DIR" && sha256sum -c "${TARBALL_NAME}.sha256") || die "verification failed: sha256sum -c did not pass"

@@ -403,6 +403,31 @@ install_config_if_absent() {
     note "Installed sample config: $dest (edit it before relying on it)"
 }
 
+# Install the nexounel CLI binary and its /usr/local/bin symlink.
+# Older release tarballs do not carry the binary: in that case the
+# menu is skipped with a warning instead of failing the install.
+# The symlink target is the path as it will appear on the target
+# system (DESTDIR stripped); the link itself is placed under
+# DESTDIR so --destdir installs stay system-touch-free.
+install_cli_binary() {
+    local install_dir="$1"
+    local link="${DESTDIR}/usr/local/bin/nexounel"
+    local target="${install_dir#$DESTDIR}/nexounel"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '[dry-run] install -m 755 %s -> %s (when present in the release)\n' "$BINARY_ROOT/nexounel" "$install_dir/nexounel"
+        printf '[dry-run] ln -sf %s %s\n' "$target" "$link"
+        return 0
+    fi
+    if [ ! -x "$BINARY_ROOT/nexounel" ]; then
+        warn "release tarball has no nexounel binary; the management menu will not be installed (use a release that includes it)"
+        return 0
+    fi
+    install_file "$BINARY_ROOT/nexounel" "$install_dir/nexounel" "755"
+    mkdir -p "$(dirname "$link")"
+    ln -sf "$target" "$link"
+    note "Installed management command: nexounel -> $target"
+}
+
 # systemctl is never invoked in --destdir mode and never in --dry-run
 # mode: the wrapper prints what would happen instead. All systemctl
 # calls in this script go through this wrapper so a DESTDIR install
@@ -672,7 +697,8 @@ acquire_from_source() {
     (cd "$src_dir/core" && go build -trimpath -ldflags "$version_ldflags" -o "$build_root/nexounel-server" ./cmd/nexounel-server) || die "go build failed for nexounel-server"
     (cd "$src_dir/core" && go build -trimpath -ldflags "$version_ldflags" -o "$build_root/nexounel-node" ./cmd/nexounel-node) || die "go build failed for nexounel-node"
     (cd "$src_dir/core" && go build -trimpath -ldflags "$version_ldflags" -o "$build_root/nexounel-panel" ./cmd/nexounel-panel) || die "go build failed for nexounel-panel"
-    chmod 755 "$build_root/nexounel-server" "$build_root/nexounel-node" "$build_root/nexounel-panel"
+    (cd "$src_dir/core" && go build -trimpath -ldflags "$version_ldflags" -o "$build_root/nexounel" ./cmd/nexounel) || die "go build failed for nexounel"
+    chmod 755 "$build_root/nexounel-server" "$build_root/nexounel-node" "$build_root/nexounel-panel" "$build_root/nexounel"
     cp -a "$src_dir/core/configs/nexounel-server.toml" "$src_dir/core/configs/nexounel-node.toml" "$src_dir/core/configs/nodes.toml.example" "$src_dir/core/configs/client_resolvers.txt" "$build_root/configs/" || die "source tarball is missing sample configs"
     if [ -d "$src_dir/install/units" ]; then
         cp -a "$src_dir/install/units/"*.service "$build_root/units/" || die "source tarball units copy failed"
@@ -916,6 +942,9 @@ do_install() {
     fi
     install_config_if_absent "$STAGING_ROOT/configs/client_resolvers.txt" "$install_dir/client_resolvers.txt" "644"
     install_file "$STAGING_ROOT/logrotate/nexounel" "$logrotate_dir/nexounel" "644"
+    # The management menu is installed in both modes: the CLI
+    # manages whichever role is on this box.
+    install_cli_binary "$install_dir"
 
     run_systemctl daemon-reload
 
@@ -950,6 +979,7 @@ do_install() {
     print_firewall_and_bind_notes
     note ""
     note "Install complete: $install_dir"
+    note "Manage Nexounel with: nexounel (run \`nexounel\` to open the management menu)"
     if [ "$MODE_MOTHER" -eq 1 ] && [ "$PANEL_READY" -eq 0 ] && [ "$DRY_RUN" -eq 0 ] && [ -z "$DESTDIR" ] && [ "$NON_INTERACTIVE" -eq 1 ]; then
         note "Panel is uninitialized (non-interactive install). Run 'nexounel-panel -init' as root, then 'systemctl enable --now nexounel-panel.service'."
     fi
@@ -1006,6 +1036,8 @@ do_uninstall() {
     remove_file "$install_dir/nexounel-server"
     remove_file "$install_dir/nexounel-node"
     remove_file "$install_dir/nexounel-panel"
+    remove_file "$install_dir/nexounel"
+    remove_file "${DESTDIR}/usr/local/bin/nexounel"
     remove_file "$unit_dir/nexounel.service"
     remove_file "$unit_dir/nexounel-node.service"
     remove_file "$unit_dir/nexounel-panel.service"

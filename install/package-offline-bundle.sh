@@ -122,7 +122,7 @@ export GOPROXY=off
 export CGO_ENABLED=0
 
 for arch in amd64 arm64; do
-    for binary in nexounel-server nexounel-node nexounel-panel; do
+    for binary in nexounel-server nexounel-node nexounel-panel nexounel; do
         printf 'Building %s (%s, %s)...\n' "$binary" "$VERSION" "$arch"
         (cd "$REPO_ROOT/core" && GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$LDFLAGS" -o "$STAGING/linux-$arch/$binary" "./cmd/$binary") \
             || die "go build failed for $binary ($arch)"
@@ -168,7 +168,7 @@ VERIFY_DIR="$(mktemp -d)"
 tar -xzf "$BUNDLE_PATH" -C "$VERIFY_DIR"
 printf 'Bundle contents:\n'
 tar -tzf "$BUNDLE_PATH"
-for binary in nexounel-server nexounel-node nexounel-panel; do
+for binary in nexounel-server nexounel-node nexounel-panel nexounel; do
     "$VERIFY_DIR/$TOP_DIR/linux-amd64/$binary" -version || die "verification failed: linux-amd64/$binary -version did not exit 0"
     go version -m "$VERIFY_DIR/$TOP_DIR/linux-arm64/$binary" | grep -q "GOARCH=arm64" || die "verification failed: linux-arm64/$binary is not an arm64 binary"
     # The arm64 binary cannot execute on an amd64 build host; the
