@@ -61,3 +61,39 @@ func TestGovernorDoesNotForceDuplicationToOne(t *testing.T) {
 		t.Fatalf("download duplication with governor only: got=%d want=7 (unchanged)", got.DownloadPacketDuplicationCount)
 	}
 }
+
+// The recent-window tracker defaults to a 32-send window when unset, and
+// an explicit value wins. 32 sends at a typical per-resolver rate of 2–5
+// q/s is ~6–16 s of history: fast enough to prune a resolver that goes
+// bad within seconds, large enough that a healthy resolver's in-flight
+// sends cannot push it to the 80% prune bar.
+func TestRecentWindowSendsDefault(t *testing.T) {
+	unset := defaultClientConfig()
+	unset.ResolverRecentWindowSends = 0
+	got := finalizeTestClientConfig(t, unset)
+	if got.ResolverRecentWindowSends != 32 {
+		t.Fatalf("recent-window default: got=%v want=32 sends", got.ResolverRecentWindowSends)
+	}
+
+	explicit := defaultClientConfig()
+	explicit.ResolverRecentWindowSends = 20
+	if got := finalizeTestClientConfig(t, explicit); got.ResolverRecentWindowSends != 20 {
+		t.Fatalf("explicit recent-window size: got=%v want=20 sends", got.ResolverRecentWindowSends)
+	}
+}
+
+// The recent-window size is clamped to the ring size (64): a negative or
+// zero value becomes the default, and an absurd value is capped.
+func TestRecentWindowSendsClamp(t *testing.T) {
+	negative := defaultClientConfig()
+	negative.ResolverRecentWindowSends = -5
+	if got := finalizeTestClientConfig(t, negative); got.ResolverRecentWindowSends != 32 {
+		t.Fatalf("negative recent-window size: got=%v want=32 (default)", got.ResolverRecentWindowSends)
+	}
+
+	huge := defaultClientConfig()
+	huge.ResolverRecentWindowSends = 1000
+	if got := finalizeTestClientConfig(t, huge); got.ResolverRecentWindowSends != 64 {
+		t.Fatalf("huge recent-window size: got=%v want=64 (clamped to ring size)", got.ResolverRecentWindowSends)
+	}
+}

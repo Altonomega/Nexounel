@@ -235,7 +235,7 @@ func TestEscalatingDisableCooldown(t *testing.T) {
 	c.nowFn = func() time.Time { return base }
 
 	disableAndRejoin := func() time.Duration {
-		if !c.disableResolverConnection("a", "sustained loss") {
+		if !c.disableResolverConnection(resolverAutoDisableCandidate{key: "a", cause: "sustained loss"}) {
 			t.Fatal("expected disable to succeed")
 		}
 		c.resolverHealthMu.RLock()
@@ -290,7 +290,7 @@ func TestOffenseCountResetsAfterQuietHour(t *testing.T) {
 	now := base
 	c.nowFn = func() time.Time { return now }
 
-	if !c.disableResolverConnection("a", "sustained loss") {
+	if !c.disableResolverConnection(resolverAutoDisableCandidate{key: "a", cause: "sustained loss"}) {
 		t.Fatal("expected first disable to succeed")
 	}
 	// More than an hour later the resolver is disabled again: the old
@@ -302,7 +302,7 @@ func TestOffenseCountResetsAfterQuietHour(t *testing.T) {
 	c.resolverHealthMu.Lock()
 	delete(c.runtimeDisabled, "a")
 	c.resolverHealthMu.Unlock()
-	if !c.disableResolverConnection("a", "sustained loss") {
+	if !c.disableResolverConnection(resolverAutoDisableCandidate{key: "a", cause: "sustained loss"}) {
 		t.Fatal("expected second disable to succeed")
 	}
 	c.resolverHealthMu.RLock()

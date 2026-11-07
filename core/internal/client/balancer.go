@@ -61,6 +61,19 @@ type connectionStats struct {
 	probationSent     uint64
 	probationAcked    uint64
 	probationLastPick time.Time
+	// Recent-window loss tracker. recentAckedRing is a ring of the acked
+	// count recorded at each send (one entry per send), so the loss over
+	// the last N sends is (N - (ackedNow - ackedNago)) / N. It is the
+	// fast signal the half-life counters lack: an established resolver
+	// with a long healthy history takes 50–300 s for its half-life loss
+	// to reach the prune bar, but the recent window shows a sustained
+	// loss burst within seconds. recentRingHead is the next slot to
+	// write; recentRingCount is the number of valid entries (<= ring
+	// size). The ring is cleared whenever the counters are reset or
+	// halved, because its snapshots are on the pre-reset scale.
+	recentAckedRing [recentWindowRingSize]uint64
+	recentRingHead  int
+	recentRingCount int
 }
 
 const connectionStatsHalfLifeThreshold = 1000
@@ -93,6 +106,18 @@ const (
 	probationSeedSent  = 100
 	probationSeedAcked = 20
 )
+
+// recentWindowRingSize is the number of send-time acked snapshots the
+// recent-window tracker keeps per resolver. The window itself is
+// configurable (RESOLVER_RECENT_WINDOW_SENDS, default 32) but never larger
+// than the ring. A 64-entry ring is 512 bytes per resolver — ~0.5 MB for a
+// 1,000-resolver pool.
+const recentWindowRingSize = 64
+
+// defaultRecentWindowSends is the recent-window size (sends) used when the
+// client config carries no value (unfinalized test configs). It must match
+// defaultRecentWindowSends in the config package.
+const defaultRecentWindowSends = 32
 
 type balancerSnapshot struct {
 	version     uint64
@@ -299,6 +324,15 @@ func (b *Balancer) SnapshotVersion() uint64 {
 func (b *Balancer) ReportSend(serverKey string) {
 	if stats := b.statsForKey(serverKey); stats != nil {
 		stats.mu.Lock()
+		// Record the acked count at this send, for the recent-window loss
+		// tracker (one ring entry per send). The snapshot is taken before
+		// the send is counted, so it is the acked count just before this
+		// send was made.
+		stats.recentAckedRing[stats.recentRingHead] = stats.acked
+		stats.recentRingHead = (stats.recentRingHead + 1) % recentWindowRingSize
+		if stats.recentRingCount < recentWindowRingSize {
+			stats.recentRingCount++
+		}
 		stats.sent++
 		if !stats.probationUntil.IsZero() {
 			stats.probationSent++
@@ -351,6 +385,8 @@ func (b *Balancer) ResetServerStats(serverKey string) {
 	stats.probationSent = 0
 	stats.probationAcked = 0
 	stats.probationLastPick = time.Time{}
+	stats.recentRingHead = 0
+	stats.recentRingCount = 0
 	stats.mu.Unlock()
 	if wasProbationary {
 		b.probationaryCount.Add(-1)
@@ -383,6 +419,8 @@ func (b *Balancer) SeedProbationaryStats(serverKey string) {
 	stats.probationSent = 0
 	stats.probationAcked = 0
 	stats.probationLastPick = time.Time{}
+	stats.recentRingHead = 0
+	stats.recentRingCount = 0
 	stats.mu.Unlock()
 	if !wasProbationary {
 		b.probationaryCount.Add(1)
@@ -504,6 +542,55 @@ func (s *connectionStats) probationLossPerMilleLocked() (uint64, bool) {
 		return 0, true
 	}
 	return (s.probationSent - s.probationAcked) * 1000 / s.probationSent, true
+}
+
+// recentWindowLossLocked reports the loss rate (parts per 1000) over the
+// last windowSends sends, from the ring of send-time acked counts. The
+// caller must hold s.mu. ok is false when fewer than windowSends sends
+// have been recorded (not enough evidence yet). The window is the fast
+// signal the half-life counters lack: an established resolver with a long
+// healthy history needs 50–300 s for its half-life loss to reach the
+// prune bar, but a sustained loss burst shows up in the recent window
+// within seconds. Acks for sends from before the window (in-flight
+// completions) can only make the window look healthier, never worse, and
+// a healthy resolver's in-flight count is a small fraction of a >=20-send
+// window, so this cannot falsely prune a healthy resolver — a single bad
+// sample, or a few, cannot push a >=20-send window to 80% loss.
+func (s *connectionStats) recentWindowLossLocked(windowSends int) (lossPerMille uint64, sent uint64, ok bool) {
+	if windowSends < 1 || s.recentRingCount < windowSends {
+		return 0, 0, false
+	}
+	// The entry windowSends ago is at (head - windowSends). The acks that
+	// arrived since that send are the current acked count minus the acked
+	// count recorded then.
+	idx := (s.recentRingHead - windowSends + recentWindowRingSize*2) % recentWindowRingSize
+	ackedWago := s.recentAckedRing[idx]
+	acksInWindow := s.acked - ackedWago
+	if acksInWindow >= uint64(windowSends) {
+		return 0, uint64(windowSends), true
+	}
+	return (uint64(windowSends) - acksInWindow) * 1000 / uint64(windowSends), uint64(windowSends), true
+}
+
+// RecentWindowLossPerMille returns the loss rate (parts per 1000) over the
+// last windowSends sends for a resolver, and whether enough sends have
+// been recorded to trust it. It is the fast pruning signal for established
+// (non-probationary) resolvers: probationary resolvers are judged on their
+// probation window instead (ProbationLossPerMille), so this deliberately
+// returns ok=false for them — the caller must not use the recent window to
+// second-guess probation. ok is also false when the resolver has no stats
+// or fewer than windowSends sends recorded.
+func (b *Balancer) RecentWindowLossPerMille(serverKey string, windowSends int) (lossPerMille uint64, sent uint64, ok bool) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return 0, 0, false
+	}
+	stats.mu.RLock()
+	defer stats.mu.RUnlock()
+	if !stats.probationUntil.IsZero() {
+		return 0, 0, false
+	}
+	return stats.recentWindowLossLocked(windowSends)
 }
 
 // graduateProbationLocked clears probation state. The caller must hold s.mu
@@ -1357,6 +1444,15 @@ func (s *connectionStats) applyHalfLifeLocked() {
 	s.acked /= 2
 	s.rttMicrosSum /= 2
 	s.rttCount /= 2
+	// The recent-window ring records acked counts on the pre-halving
+	// scale; after halving those snapshots are meaningless (the
+	// difference would underflow or overcount loss). Clear the ring so
+	// the window rebuilds from fresh sends. An active resolver
+	// accumulates the >=20 sends the window needs to be trusted within
+	// seconds, so the tracker is only briefly blind after a halving —
+	// and the half-life counters still judge the resolver meanwhile.
+	s.recentRingHead = 0
+	s.recentRingCount = 0
 }
 
 func (b *Balancer) nextRandom() uint64 {

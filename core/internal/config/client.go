@@ -120,6 +120,17 @@ type ClientConfig struct {
 	// duplication to 1 — the governor only paces the offered rate, the
 	// tunnel's redundancy stays as configured.
 	GlobalOfferedQPSMax float64 `toml:"GLOBAL_OFFERED_QPS_MAX"`
+	// ResolverRecentWindowSends (RESOLVER_RECENT_WINDOW_SENDS) is the
+	// number of recent sends the recent-window loss tracker covers. The
+	// tracker is the fast pruning signal for established resolvers: the
+	// half-life counters dilute a new loss burst over 50–300 s, but a
+	// sustained loss burst shows up in the recent window within seconds,
+	// so a resolver that goes bad is pruned quickly instead of dragging
+	// the session. The window uses the same >=80% loss / >=20-observation
+	// bar as the sustained-loss pruner, so a single bad sample cannot
+	// prune a healthy resolver. Default 32 sends; clamped to [1, 64]
+	// (the ring size). 0 = default (32).
+	ResolverRecentWindowSends int `toml:"RESOLVER_RECENT_WINDOW_SENDS"`
 	// ResolverTransport selects how DNS queries reach resolvers:
 	//   "auto" (default) — probe over UDP first; if no resolver passes MTU
 	//                       testing, retry the whole fleet over TCP/53.
@@ -457,6 +468,14 @@ type ClientConfigFlagBinder struct {
 // ~700–1,000 q/s). Tunable via GLOBAL_OFFERED_QPS_MAX.
 const defaultGlobalOfferedQPSMax = 2000
 
+// defaultRecentWindowSends is the recent-window loss tracker default
+// (sends covered by the window). 32 sends at a typical per-resolver rate
+// of 2–5 q/s is ~6–16 s of history: fast enough to prune a resolver that
+// goes bad within seconds, large enough that a healthy resolver's
+// in-flight sends (a small fraction of a >=20-send window) cannot push it
+// to the 80% prune bar. Tunable via RESOLVER_RECENT_WINDOW_SENDS.
+const defaultRecentWindowSends = 32
+
 func defaultClientConfig() ClientConfig {
 	return ClientConfig{
 		ConfigPreset:                          "default",
@@ -495,6 +514,7 @@ func defaultClientConfig() ClientConfig {
 		RecheckServerIntervalSeconds:          1.0,
 		RecheckBatchSize:                      30,
 		GlobalOfferedQPSMax:                   defaultGlobalOfferedQPSMax,
+		ResolverRecentWindowSends:             defaultRecentWindowSends,
 		AutoDisableTimeoutServers:             true,
 		// A resolver is only culled after this many seconds of *uninterrupted*
 		// timeouts (zero successes). 20s was too twitchy for long/lossy sessions:
@@ -955,6 +975,13 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	// force duplication to 1 or disable session-init racing (those are
 	// the legacy per-network caps' side effects, not the governor's).
 	cfg.GlobalOfferedQPSMax = clampFloat(defaultFloatAtMostZero(cfg.GlobalOfferedQPSMax, defaultGlobalOfferedQPSMax), 0, 100000)
+	// The recent-window tracker defaults on (32 sends) when unset; an
+	// explicit value wins. It is clamped to the ring size (64) so the
+	// window never asks for more sends than the tracker holds.
+	if cfg.ResolverRecentWindowSends <= 0 {
+		cfg.ResolverRecentWindowSends = defaultRecentWindowSends
+	}
+	cfg.ResolverRecentWindowSends = clampInt(cfg.ResolverRecentWindowSends, 1, 64)
 	if cfg.QueryRateLimited() {
 		// Under a query cap a duplicate costs the same as a new packet, while
 		// ARQ only resends what was actually lost, so spend nothing on copies.

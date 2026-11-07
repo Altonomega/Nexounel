@@ -799,7 +799,7 @@ func TestDisableResolverClearsPreferredStreamResolverReferences(t *testing.T) {
 	streamB.ResolverResendStreak = 2
 	c.active_streams[streamB.StreamID] = streamB
 
-	if !c.disableResolverConnection("a", "test disable") {
+	if !c.disableResolverConnection(resolverAutoDisableCandidate{key: "a", cause: "test disable"}) {
 		t.Fatal("expected resolver a to be disabled")
 	}
 
@@ -833,7 +833,7 @@ func TestResetRuntimeBindingsPreservesResolverHealthState(t *testing.T) {
 	stream.PreferredServerKey = "a"
 	c.active_streams[stream.StreamID] = stream
 
-	if !c.disableResolverConnection("a", "test disable") {
+	if !c.disableResolverConnection(resolverAutoDisableCandidate{key: "a", cause: "test disable"}) {
 		t.Fatal("expected resolver a to be disabled")
 	}
 

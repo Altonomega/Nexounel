@@ -53,6 +53,13 @@ type resolverAutoDisableCandidate struct {
 	oldestAge      time.Duration
 	timeoutOnlyAge time.Duration
 	cause          string
+	// windowLoss carries the recent-window evidence when the candidate was
+	// created by the recent-window criterion (criterion 3). When set, the
+	// disable log reports these window values instead of the (diluted)
+	// half-life counters, so the log shows WHY the resolver was pruned.
+	windowLoss         bool
+	windowLossPerMille uint64
+	windowSent         uint64
 }
 
 // resolverOffenseRecord counts how many times a resolver has been pruned.
@@ -572,6 +579,44 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 				seen[key] = struct{}{}
 			}
 		}
+		// Criterion 3 (recent-window loss): sustained high loss over the
+		// last few dozen sends. This is the fast signal the half-life
+		// counters lack — an established resolver with a long healthy
+		// history needs 50–300 s for its half-life loss to reach the
+		// prune bar (the old counters dilute the new losses), but a
+		// sustained loss burst shows up in the recent window within
+		// seconds. It uses the same >=80% / >=20-observation bar as
+		// criterion 2, so a single bad sample (or a few) cannot prune a
+		// healthy resolver. It applies ONLY to non-probationary
+		// resolvers: probationary resolvers are judged on their trickle
+		// window (criterion 2 via resolverPruningLossPerMille), and the
+		// recent window must not second-guess probation.
+		// Criterion 3b (recent-window extreme loss): total loss over the
+		// last 10 sends, pruned on far fewer observations — same
+		// reasoning as criterion 2b, but on the fast window.
+		if !c.balancer.IsProbationary(key) {
+			windowSends := c.recentWindowSends()
+			if loss, sent, ok := c.balancer.RecentWindowLossPerMille(key, windowSends); ok {
+				if sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
+					candidates = append(candidates, resolverAutoDisableCandidate{
+						key: key, cause: "recent-window loss",
+						windowLoss: true, windowLossPerMille: loss, windowSent: sent,
+					})
+					seen[key] = struct{}{}
+				}
+			}
+			if _, dup := seen[key]; !dup {
+				if loss, sent, ok := c.balancer.RecentWindowLossPerMille(key, autoDisableExtremeLossMinObservations); ok {
+					if loss >= 1000 && sent >= autoDisableExtremeLossMinObservations {
+						candidates = append(candidates, resolverAutoDisableCandidate{
+							key: key, cause: "recent-window 100% loss",
+							windowLoss: true, windowLossPerMille: loss, windowSent: sent,
+						})
+						seen[key] = struct{}{}
+					}
+				}
+			}
+		}
 	}
 	c.resolverHealthMu.Unlock()
 
@@ -628,11 +673,7 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		if !c.canDisableResolverConnection(candidate.key) {
 			continue
 		}
-		cause := candidate.cause
-		if cause == "" {
-			cause = "100% timeout window"
-		}
-		if c.disableResolverConnection(candidate.key, cause) {
+		if c.disableResolverConnection(candidate) {
 			disabledBudget--
 		}
 	}
@@ -658,9 +699,14 @@ func (c *Client) resolverConnectionIsValidFromSnapshot(snap *balancerSnapshot, k
 	return ok && conn.IsValid
 }
 
-func (c *Client) disableResolverConnection(serverKey string, cause string) bool {
-	if c == nil || serverKey == "" {
+func (c *Client) disableResolverConnection(candidate resolverAutoDisableCandidate) bool {
+	if c == nil || candidate.key == "" {
 		return false
+	}
+	serverKey := candidate.key
+	cause := candidate.cause
+	if cause == "" {
+		cause = "100% timeout window"
 	}
 	conn, ok := c.GetConnectionByKey(serverKey)
 	if !ok || !conn.IsValid || !c.canDisableResolverConnection(serverKey) {
@@ -730,9 +776,16 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 
 	// Observability: capture the counters that drove the prune BEFORE the
 	// stats are reset, so the log line shows WHY this resolver was pruned.
-	// The pruning loss is used (the trickle window for a probationary
-	// resolver), so the line shows the real evidence, not the seed.
+	// For a recent-window prune the window values are used (they were
+	// captured when the candidate was created, so they are the evidence
+	// that triggered the prune); for a probationary resolver the trickle
+	// window is used; otherwise the pruning loss is used, so the line
+	// shows the real evidence, not the seed.
 	lossPM, sent, _ := c.resolverPruningLossPerMille(serverKey)
+	if candidate.windowLoss {
+		lossPM = candidate.windowLossPerMille
+		sent = candidate.windowSent
+	}
 	acked := uint64(0)
 	if sent > 0 {
 		if lossPM >= 1000 {
@@ -1200,6 +1253,21 @@ func (c *Client) isRuntimeDisabledResolver(serverKey string) bool {
 
 func (c *Client) autoDisableTimeoutWindow() time.Duration {
 	return time.Duration(c.cfg.AutoDisableTimeoutWindowSeconds * float64(time.Second))
+}
+
+// recentWindowSends is the number of recent sends the recent-window loss
+// tracker covers (RESOLVER_RECENT_WINDOW_SENDS, default 32). It is clamped
+// to the ring size, so the window never asks for more sends than the ring
+// holds. An unset/zero value falls back to the default (test clients built
+// without finalizing the config carry a zero value).
+func (c *Client) recentWindowSends() int {
+	if c == nil || c.cfg.ResolverRecentWindowSends < 1 {
+		return defaultRecentWindowSends
+	}
+	if c.cfg.ResolverRecentWindowSends > recentWindowRingSize {
+		return recentWindowRingSize
+	}
+	return c.cfg.ResolverRecentWindowSends
 }
 
 func (c *Client) autoDisableCheckInterval() time.Duration {
