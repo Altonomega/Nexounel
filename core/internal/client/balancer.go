@@ -655,7 +655,9 @@ func (b *Balancer) GetBestConnection() (Connection, bool) {
 		if !b.hasLossSignal(snap) {
 			return b.roundRobinBestConnection(snap)
 		}
-		return b.bestScoredConnection(snap, b.lossScore)
+		// Load-adjusted loss: the pick spreads before any resolver is
+		// hammered to its rate ceiling (plan 3.3).
+		return b.bestScoredConnection(snap, b.loadAdjustedLossScore)
 	case BalancingLowestLatency:
 		if !b.hasLatencySignal(snap) {
 			return b.roundRobinBestConnection(snap)
@@ -689,7 +691,7 @@ func (b *Balancer) GetBestConnectionExcluding(excludeKey string) (Connection, bo
 		if !b.hasLossSignal(snap) {
 			return b.roundRobinBestConnectionExcluding(snap, excludeKey)
 		}
-		return b.bestScoredConnectionExcluding(snap, b.lossScore, excludeKey)
+		return b.bestScoredConnectionExcluding(snap, b.loadAdjustedLossScore, excludeKey)
 	case BalancingLowestLatency:
 		if !b.hasLatencySignal(snap) {
 			return b.roundRobinBestConnectionExcluding(snap, excludeKey)
@@ -730,7 +732,7 @@ func (b *Balancer) GetUniqueConnections(requiredCount int) []Connection {
 		if !b.hasLossSignal(snap) {
 			return b.selectRoundRobin(snap, count)
 		}
-		return b.selectLowestScore(snap, count, b.lossScore)
+		return b.selectLowestScore(snap, count, b.loadAdjustedLossScore)
 	case BalancingLowestLatency:
 		if !b.hasLatencySignal(snap) {
 			return b.selectRoundRobin(snap, count)
@@ -1204,6 +1206,29 @@ func (b *Balancer) lossScore(snap *balancerSnapshot, idx int) uint64 {
 	}
 	// loss ratio in per 1000 for integer math (a/b -> a*1000/b)
 	return (sent - acked) * 1000 / sent
+}
+
+// loadAdjustedLossScore returns the loss score with a load term added, so a
+// resolver that has recently carried many queries scores worse than an
+// equally-healthy but lightly-loaded one, and the pick spreads before any
+// resolver hits its rate ceiling. The load term reuses the
+// loadDiscountedWeight discount shape (1/(1+sent/100)): it is
+// 100*sent/(100+sent) per-mille — 0 at no load, ~50 at 100 sends, bounded
+// at 100 so loss remains the dominant signal and a genuinely lossy resolver
+// is never preferred over a healthy one because of load alone. This is plan
+// item 3.3 (LeastLoss load-discount): the per-resolver rate cliff
+// (ATLAS-PER-RESOLVER-TRIGGER-20261108) is driven by LeastLoss concentrating
+// the upload onto the lowest-loss resolvers until each crosses its own
+// ceiling; the load term spreads the pick before that happens, with no
+// config side effects (unlike the per-resolver rate cap, whose forced
+// dup-to-1 broke uploads).
+func (b *Balancer) loadAdjustedLossScore(snap *balancerSnapshot, idx int) uint64 {
+	base := b.lossScore(snap, idx)
+	sent := sentByIndex(snap, idx)
+	if sent == 0 {
+		return base
+	}
+	return base + 100*sent/(100+sent)
 }
 
 // AggregateLossPerMille returns the mean observed packet loss (parts per 1000)

@@ -105,6 +105,60 @@ func TestBalancerHighestMTUSelectsLargestDownloadUploadThenLatency(t *testing.T)
 	}
 }
 
+func TestBalancerLeastLossPrefersLeastLoadedAtEqualLoss(t *testing.T) {
+	// Plan 3.3 / ATLAS-PER-RESOLVER-TRIGGER-20261108 §5.2: LeastLoss must
+	// spread the pick by recent load before any resolver is hammered to
+	// its rate ceiling. At equal loss the least-loaded resolver wins, and
+	// a heavily loaded 0-loss resolver loses to a lightly loaded
+	// low-loss resolver.
+	b := NewBalancer(BalancingLeastLoss)
+	connections := []*Connection{
+		{Key: "hot", IsValid: true},
+		{Key: "cool", IsValid: true},
+		{Key: "low-loss", IsValid: true},
+	}
+	b.SetConnections(connections)
+
+	// hot: 0 loss but heavily loaded (200 sends, all acked).
+	// Adjusted score: 0 + 100*200/300 = 67.
+	for i := 0; i < 200; i++ {
+		b.ReportSend("hot")
+		b.ReportSuccess("hot", 5*time.Millisecond)
+	}
+	// cool: 0 loss, lightly loaded (10 sends, all acked).
+	// Adjusted score: 0 + 100*10/110 = 9.
+	for i := 0; i < 10; i++ {
+		b.ReportSend("cool")
+		b.ReportSuccess("cool", 5*time.Millisecond)
+	}
+	// low-loss: 20 per-mille loss (50 sends, 49 acked), lightly loaded.
+	// Adjusted score: 20 + 100*50/150 = 53.
+	for i := 0; i < 50; i++ {
+		b.ReportSend("low-loss")
+	}
+	for i := 0; i < 49; i++ {
+		b.ReportSuccess("low-loss", 5*time.Millisecond)
+	}
+
+	best, ok := b.GetBestConnection()
+	if !ok {
+		t.Fatal("expected best connection")
+	}
+	if best.Key != "cool" {
+		t.Fatalf("expected least-loaded 0-loss resolver cool first, got %q", best.Key)
+	}
+
+	// The two lowest adjusted scores are cool (9) and low-loss (53);
+	// the heavily loaded 0-loss resolver hot (67) must not be picked.
+	selected := b.GetUniqueConnections(2)
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 connections, got %d", len(selected))
+	}
+	if selected[0].Key != "cool" || selected[1].Key != "low-loss" {
+		t.Fatalf("expected [cool low-loss], got [%q %q]", selected[0].Key, selected[1].Key)
+	}
+}
+
 func TestBalancerStatsHalfLifeAlsoAppliesOnSend(t *testing.T) {
 	b := NewBalancer(BalancingLeastLoss)
 	connections := []*Connection{
