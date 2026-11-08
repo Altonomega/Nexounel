@@ -203,6 +203,12 @@ ENCRYPTION_KEY = "secret"
 	if cfg.AutoDisableTimeoutWindowSeconds != 180.0 {
 		t.Fatalf("unexpected auto-disable timeout window default: got=%v want=%v", cfg.AutoDisableTimeoutWindowSeconds, 180.0)
 	}
+	// Auto-disable cap: 10% of the pool (raised from the 5% hard const on
+	// 2026-11-08 — 5% saturated at idle on the live node, Disabled 46/46,
+	// leaving no pruning headroom for any burst).
+	if cfg.AutoDisableMaxDisabledFractionPercent != 10 {
+		t.Fatalf("unexpected auto-disable max disabled fraction default: got=%d want=%d", cfg.AutoDisableMaxDisabledFractionPercent, 10)
+	}
 	if cfg.ProtocolType != "TCP" {
 		t.Fatal("tcp mode should be loaded")
 	}
@@ -299,6 +305,7 @@ AUTO_DISABLE_TIMEOUT_SERVERS = true
 AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS = 3.0
 AUTO_DISABLE_MIN_OBSERVATIONS = 3
 AUTO_DISABLE_CHECK_INTERVAL_SECONDS = 3.0
+AUTO_DISABLE_MAX_DISABLED_FRACTION_PERCENT = 30
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
 	}
@@ -316,6 +323,10 @@ AUTO_DISABLE_CHECK_INTERVAL_SECONDS = 3.0
 	}
 	if cfg.AutoDisableCheckIntervalSeconds != 3.0 {
 		t.Fatalf("unexpected auto-disable check interval: got=%v want=%v", cfg.AutoDisableCheckIntervalSeconds, 3.0)
+	}
+	// 30% clamps to the 25% ceiling.
+	if cfg.AutoDisableMaxDisabledFractionPercent != 25 {
+		t.Fatalf("unexpected auto-disable max disabled fraction clamp: got=%d want=%d", cfg.AutoDisableMaxDisabledFractionPercent, 25)
 	}
 }
 

@@ -172,6 +172,7 @@ type ClientConfig struct {
 	AutoDisableTimeoutWindowSeconds       float64 `toml:"AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS"`
 	AutoDisableMinObservations            int     `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
 	AutoDisableCheckIntervalSeconds       float64 `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
+	AutoDisableMaxDisabledFractionPercent int     `toml:"AUTO_DISABLE_MAX_DISABLED_FRACTION_PERCENT"`
 	BaseEncodeData                        bool    `toml:"BASE_ENCODE_DATA"`
 	LegacySessionID                       bool    `toml:"LEGACY_SESSION_ID"`
 	MaxActiveStreams                      int     `toml:"MAX_ACTIVE_STREAMS"`
@@ -528,43 +529,50 @@ func defaultClientConfig() ClientConfig {
 		AutoDisableTimeoutWindowSeconds: 180.0,
 		AutoDisableMinObservations:      3,
 		AutoDisableCheckIntervalSeconds: 1.0,
-		BaseEncodeData:                  false,
-		LegacySessionID:                 false,
-		MaxActiveStreams:                2048,
-		LocalHandshakeTimeoutSeconds:    5.0,
-		UploadCompressionType:           2,
-		DownloadCompressionType:         2,
-		CompressionMinSize:              compression.DefaultMinSize,
-		ZSTDDictEnabled:                 false,
-		ZSTDLevel:                       0,
-		ZSTDLongEnabled:                 false,
-		PackingEnabled:                  false,
-		PackingMaxDelayMs:               25,
-		PackingMaxBufferBytes:           32768,
-		REEnabled:                       false,
-		RECacheMaxMB:                    128,
-		DataEncryptionMethod:            5,
-		EncryptionKey:                   "",
-		CapacityMargin:                  0.95,
-		MultiSessionEnabled:             true,
-		MinUploadMTU:                    100,
-		MinDownloadMTU:                  1000,
-		MaxUploadMTU:                    200,
-		MaxDownloadMTU:                  4000,
-		MTUTestRetriesResolvers:         3,
-		MTUTestRetriesLogs:              5,
-		MTUTestTimeoutResolvers:         2.0,
-		MTUTestTimeoutLogs:              2.0,
-		MTUTestParallelismResolvers:     100,
-		MTUTestParallelismLogs:          32,
-		MTUBackgroundParallelism:        1,
-		MTUProbeSamples:                 1,
-		MTUMaxLoss:                      0.0,
-		MTUGroupGapRatio:                0.25,
-		MTUAdaptiveGrouping:             true,
-		MTUWeightedMinPool:              2,
-		FastConnect:                     false,
-		ResolverDoQPort:                 853, ResolverDiscoveryWant: 16, ResolverDiscoveryConcurrency: 16,
+		// Cap on how many resolvers the pruner may hold disabled at once,
+		// as a percent of the configured pool (at least 3, plus the
+		// three-resolver safety floor). 5% saturated at idle on the live
+		// node on 2026-11-08 (978 cap-hits in 30 min, Disabled 46/46),
+		// leaving no pruning headroom for any burst — 10% restores it
+		// while still keeping >=90% of the fleet valid at full saturation.
+		AutoDisableMaxDisabledFractionPercent: 10,
+		BaseEncodeData:                        false,
+		LegacySessionID:                       false,
+		MaxActiveStreams:                      2048,
+		LocalHandshakeTimeoutSeconds:          5.0,
+		UploadCompressionType:                 2,
+		DownloadCompressionType:               2,
+		CompressionMinSize:                    compression.DefaultMinSize,
+		ZSTDDictEnabled:                       false,
+		ZSTDLevel:                             0,
+		ZSTDLongEnabled:                       false,
+		PackingEnabled:                        false,
+		PackingMaxDelayMs:                     25,
+		PackingMaxBufferBytes:                 32768,
+		REEnabled:                             false,
+		RECacheMaxMB:                          128,
+		DataEncryptionMethod:                  5,
+		EncryptionKey:                         "",
+		CapacityMargin:                        0.95,
+		MultiSessionEnabled:                   true,
+		MinUploadMTU:                          100,
+		MinDownloadMTU:                        1000,
+		MaxUploadMTU:                          200,
+		MaxDownloadMTU:                        4000,
+		MTUTestRetriesResolvers:               3,
+		MTUTestRetriesLogs:                    5,
+		MTUTestTimeoutResolvers:               2.0,
+		MTUTestTimeoutLogs:                    2.0,
+		MTUTestParallelismResolvers:           100,
+		MTUTestParallelismLogs:                32,
+		MTUBackgroundParallelism:              1,
+		MTUProbeSamples:                       1,
+		MTUMaxLoss:                            0.0,
+		MTUGroupGapRatio:                      0.25,
+		MTUAdaptiveGrouping:                   true,
+		MTUWeightedMinPool:                    2,
+		FastConnect:                           false,
+		ResolverDoQPort:                       853, ResolverDiscoveryWant: 16, ResolverDiscoveryConcurrency: 16,
 		ResolverDiscoveryPaceMilliseconds:    20,
 		DNSRandomizeQueryID:                  true,
 		DNSEDNSCookie:                        true,
@@ -1000,6 +1008,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 180.0), 1.0, 86400.0)
 	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 3), 1, 10000)
 	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 1.0), 0.25, 600.0)
+	cfg.AutoDisableMaxDisabledFractionPercent = clampInt(defaultIntBelow(cfg.AutoDisableMaxDisabledFractionPercent, 1, 10), 1, 25)
 	cfg.MaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.MaxPacketsPerBatch, 1, 10), 1, 256)
 	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 2000), 1, 20000)
 	cfg.ARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInitialRTOSeconds, 1.0), 0.05, 60.0)

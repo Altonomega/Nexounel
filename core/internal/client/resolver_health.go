@@ -53,6 +53,13 @@ type resolverAutoDisableCandidate struct {
 	oldestAge      time.Duration
 	timeoutOnlyAge time.Duration
 	cause          string
+	// lossPerMille / sent rank the candidate for worst-first ordering:
+	// the loss that triggered candidacy (1000 = total loss) and the
+	// number of sends behind it. Populated at creation for every
+	// criterion, so the pruner can spend a scarce disable budget on the
+	// resolvers dropping the most queries.
+	lossPerMille uint64
+	sent         uint64
 	// windowLoss carries the recent-window evidence when the candidate was
 	// created by the recent-window criterion (criterion 3). When set, the
 	// disable log reports these window values instead of the (diluted)
@@ -83,11 +90,6 @@ const (
 	resolverOffenseCooldownSecond = 2 * time.Minute
 	resolverOffenseCooldownRepeat = 10 * time.Minute
 	resolverOffenseResetAfter     = time.Hour
-	// resolverMaxDisabledFraction caps the number of resolvers the pruner
-	// may hold disabled at once (as a fraction of the configured pool), so
-	// a bad sweep cannot disable the whole fleet. The three-resolver safety
-	// floor in canDisableResolverConnection still applies on top.
-	resolverMaxDisabledFraction = 5 // percent
 )
 
 // resolverOffenseCooldownFor returns the recheck cooldown for a resolver
@@ -544,7 +546,10 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		// Criterion 1 (existing): 100% timeout over a mature window.
 		if state != nil && len(state.Events) >= c.autoDisableMinObservations() && !state.TimeoutOnlySince.IsZero() {
 			if timeoutOnlyAge := now.Sub(state.TimeoutOnlySince); timeoutOnlyAge >= window {
-				candidate := resolverAutoDisableCandidate{key: key, cause: "100% timeout window"}
+				// Timeout-only means total loss over the window; the
+				// event count ranks it against other timeout-only
+				// candidates (more timeouts = more evidence).
+				candidate := resolverAutoDisableCandidate{key: key, cause: "100% timeout window", lossPerMille: 1000, sent: uint64(len(state.Events))}
 				if debugEnabled {
 					candidate.eventCount = len(state.Events)
 					candidate.span = state.Events[len(state.Events)-1].At.Sub(state.Events[0].At)
@@ -568,14 +573,14 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		// the trickle ever ran).
 		if loss, sent, ok := c.resolverPruningLossPerMille(key); ok {
 			if sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
-				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "sustained loss"})
+				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "sustained loss", lossPerMille: loss, sent: sent})
 				seen[key] = struct{}{}
 			} else if loss >= 1000 && sent >= autoDisableExtremeLossMinObservations {
 				// Criterion 2b (extreme loss): total loss (100%, zero
 				// acks) is pruned on far fewer observations — a resolver
 				// that answers nothing has no delivery signal to wait
 				// for, so there is no reason to let it burn 20 sends.
-				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "100% loss"})
+				candidates = append(candidates, resolverAutoDisableCandidate{key: key, cause: "100% loss", lossPerMille: 1000, sent: sent})
 				seen[key] = struct{}{}
 			}
 		}
@@ -600,6 +605,7 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 				if sent >= autoDisableLossMinObservations && loss >= autoDisableLossPerMilleThreshold {
 					candidates = append(candidates, resolverAutoDisableCandidate{
 						key: key, cause: "recent-window loss",
+						lossPerMille: loss, sent: sent,
 						windowLoss: true, windowLossPerMille: loss, windowSent: sent,
 					})
 					seen[key] = struct{}{}
@@ -610,6 +616,7 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 					if loss >= 1000 && sent >= autoDisableExtremeLossMinObservations {
 						candidates = append(candidates, resolverAutoDisableCandidate{
 							key: key, cause: "recent-window 100% loss",
+							lossPerMille: 1000, sent: sent,
 							windowLoss: true, windowLossPerMille: loss, windowSent: sent,
 						})
 						seen[key] = struct{}{}
@@ -643,14 +650,26 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 		}
 	}
 
-	// Cap how many resolvers the pruner may hold disabled at once (5% of
-	// the configured pool, at least 3), so a bad sweep cannot disable the
-	// whole fleet. The three-resolver safety floor in
-	// canDisableResolverConnection still applies on top of this. The cap
-	// is a budget: when it is exhausted the remaining candidates are
-	// skipped this sweep (they are reconsidered on the next sweep, after
-	// some resolvers have recovered and rejoined).
-	maxDisabled := max(3, len(c.connections)*resolverMaxDisabledFraction/100)
+	// Worst-first: when the disable budget is scarce, spend it on the
+	// resolvers dropping the most queries, not on whichever candidate the
+	// balancer snapshot happened to list first. Loss desc, then sends
+	// desc, so a 100%-loss resolver with 10 sends outranks one with 3.
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].lossPerMille != candidates[j].lossPerMille {
+			return candidates[i].lossPerMille > candidates[j].lossPerMille
+		}
+		return candidates[i].sent > candidates[j].sent
+	})
+
+	// Cap how many resolvers the pruner may hold disabled at once
+	// (AUTO_DISABLE_MAX_DISABLED_FRACTION_PERCENT of the configured pool,
+	// at least 3), so a bad sweep cannot disable the whole fleet. The
+	// three-resolver safety floor in canDisableResolverConnection still
+	// applies on top of this. The cap is a budget: when it is exhausted
+	// the remaining candidates are skipped this sweep (they are
+	// reconsidered on the next sweep, after some resolvers have recovered
+	// and rejoined).
+	maxDisabled := max(3, len(c.connections)*c.autoDisableMaxDisabledFractionPercent()/100)
 	c.resolverHealthMu.RLock()
 	disabledBudget := maxDisabled - len(c.runtimeDisabled)
 	c.resolverHealthMu.RUnlock()
@@ -1279,6 +1298,23 @@ func (c *Client) autoDisableMinObservations() int {
 		return 1
 	}
 	return c.cfg.AutoDisableMinObservations
+}
+
+// autoDisableMaxDisabledFractionPercent caps the number of resolvers the
+// pruner may hold disabled at once, as a percent of the configured pool
+// (AUTO_DISABLE_MAX_DISABLED_FRACTION_PERCENT, default 10, clamped
+// 1–25), so a bad sweep cannot disable the whole fleet. An unset/zero
+// value falls back to the default (test clients built without finalizing
+// the config carry a zero value). The three-resolver safety floor in
+// canDisableResolverConnection still applies on top.
+func (c *Client) autoDisableMaxDisabledFractionPercent() int {
+	if c == nil || c.cfg.AutoDisableMaxDisabledFractionPercent < 1 {
+		return 10
+	}
+	if c.cfg.AutoDisableMaxDisabledFractionPercent > 25 {
+		return 25
+	}
+	return c.cfg.AutoDisableMaxDisabledFractionPercent
 }
 
 func (c *Client) recheckInactiveInterval() time.Duration {

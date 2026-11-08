@@ -1060,6 +1060,59 @@ func TestResolverAutoDisableStopsAtThreeValidResolvers(t *testing.T) {
 	}
 }
 
+func TestResolverAutoDisableDisablesWorstCandidateFirst(t *testing.T) {
+	// 8 resolvers, default 10% fraction: the disable budget is
+	// max(3, 8*10/100) = 3 slots for 4 timeout-only candidates. The
+	// worst candidate (d, 10 timeout events) sorts last in the balancer
+	// snapshot, so without worst-first ordering the snapshot-order loop
+	// would disable a, b, c and leave d valid; worst-first must disable d.
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 10.0,
+		AutoDisableMinObservations:      1,
+		AutoDisableCheckIntervalSeconds: 1.0,
+	}, "a", "b", "c", "d", "e", "f", "g", "h")
+	c.initResolverRecheckMeta()
+
+	base := time.Date(2026, 3, 25, 17, 0, 0, 0, time.UTC)
+	for _, key := range []string{"a", "b", "c"} {
+		for i := 0; i < 3; i++ {
+			c.recordResolverHealthEvent(key, false, base.Add(time.Duration(i)*time.Second))
+		}
+	}
+	for i := 0; i < 10; i++ {
+		c.recordResolverHealthEvent("d", false, base.Add(time.Duration(i)*time.Second))
+	}
+
+	now := base.Add(10 * time.Second)
+	c.nowFn = func() time.Time { return now }
+	c.runResolverAutoDisable(now)
+
+	conn, ok := c.GetConnectionByKey("d")
+	if !ok {
+		t.Fatal("expected disabled connection to still exist")
+	}
+	if conn.IsValid {
+		t.Fatal("expected worst candidate (10 timeout events) to be disabled first")
+	}
+	stillValid := 0
+	for _, key := range []string{"a", "b", "c"} {
+		conn, ok := c.GetConnectionByKey(key)
+		if !ok {
+			t.Fatalf("expected connection %s to still exist", key)
+		}
+		if conn.IsValid {
+			stillValid++
+		}
+	}
+	if stillValid != 1 {
+		t.Fatalf("expected exactly one of a/b/c to survive the 3-slot budget, got valid=%d", stillValid)
+	}
+	if c.balancer.ValidCount() != 5 {
+		t.Fatalf("unexpected valid count after disable: got=%d want=5", c.balancer.ValidCount())
+	}
+}
+
 func TestStrategy5DisablesFailedPrimaryAndRequestsReserveRecluster(t *testing.T) {
 	c := buildTestClientWithResolvers(config.ClientConfig{
 		ResolverBalancingStrategy:       int(BalancingMTUWeighted),
