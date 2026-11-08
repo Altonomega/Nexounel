@@ -520,9 +520,12 @@ func defaultClientConfig() ClientConfig {
 		// timeouts (zero successes). 20s was too twitchy for long/lossy sessions:
 		// resolvers having a rough patch got disabled faster than recovery could
 		// bring them back, ratcheting the pool down to the floor and collapsing
-		// throughput. 90s keeps genuinely-dead resolvers out while tolerating
-		// transient loss.
-		AutoDisableTimeoutWindowSeconds: 90.0,
+		// throughput. 90s was still too twitchy: on 2026-11-07 the live node
+		// pruned 292 resolvers in 5 h on this criterion, and 64% of them had
+		// only 20-50% overall loss — transient rate-limit bursts, not dead
+		// resolvers. 180s rides out longer bursts while still culling
+		// genuinely-dead resolvers (they stay timeout-only indefinitely).
+		AutoDisableTimeoutWindowSeconds: 180.0,
 		AutoDisableMinObservations:      3,
 		AutoDisableCheckIntervalSeconds: 1.0,
 		BaseEncodeData:                  false,
@@ -994,7 +997,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		cfg.MTUBackgroundParallelism = 1
 		cfg.RecheckBatchSize = min(cfg.RecheckBatchSize, 2)
 	}
-	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 90.0), 1.0, 86400.0)
+	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 180.0), 1.0, 86400.0)
 	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 3), 1, 10000)
 	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 1.0), 0.25, 600.0)
 	cfg.MaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.MaxPacketsPerBatch, 1, 10), 1, 256)

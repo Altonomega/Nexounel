@@ -196,6 +196,13 @@ ENCRYPTION_KEY = "secret"
 	if cfg.MTUTestRetries != 3 || cfg.MTUTestTimeout != 2.0 || cfg.MTUTestParallelism != 100 {
 		t.Fatalf("unexpected mtu defaults: retries=%d timeout=%v parallelism=%d", cfg.MTUTestRetries, cfg.MTUTestTimeout, cfg.MTUTestParallelism)
 	}
+	// Criterion 1 (timeout-only) prune window: 180 s (raised from 90 s on
+	// 2026-11-07 — the 90 s window pruned 292 resolvers in 5 h on the live
+	// node, 64% of them with only 20-50% overall loss, i.e. transient
+	// rate-limit bursts rather than dead resolvers).
+	if cfg.AutoDisableTimeoutWindowSeconds != 180.0 {
+		t.Fatalf("unexpected auto-disable timeout window default: got=%v want=%v", cfg.AutoDisableTimeoutWindowSeconds, 180.0)
+	}
 	if cfg.ProtocolType != "TCP" {
 		t.Fatal("tcp mode should be loaded")
 	}

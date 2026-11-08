@@ -219,6 +219,128 @@ func bootstrapNodeClient(configPath string, overrides config.ClientConfigOverrid
 	return client.Bootstrap(configPath, overrides)
 }
 
+// Startup reserve retry pass (§8.4 option 2): the probe pass can run into
+// a rate-limited fleet (e.g. right after another node's hammering) and
+// strand hundreds of resolvers as reserves that are never reused. If a
+// significant share of the fleet failed the first probe, wait a short
+// cooldown and re-probe ONLY the failed resolvers once before clustering.
+// This catches resolvers whose rate-limit burst ends quickly, without
+// re-hammering the fleet with a full re-probe of the healthy resolvers.
+const (
+	// startupRetryCooldown is the pause after the first probe pass before
+	// re-probing failed resolvers.
+	startupRetryCooldown = 90 * time.Second
+	// startupRetryMinFailedFrac is the minimum failed fraction (of the
+	// total probed) that triggers a retry pass. Below this, the retry is
+	// not worth the startup delay.
+	startupRetryMinFailedFrac = 0.10
+)
+
+// mergeProbeResults overlays retry results onto the original probe
+// results, keyed by resolver IP. A retry result replaces the original
+// entry for the same resolver (whether the retry passed or failed — a
+// failed retry confirms the resolver is still unusable). Resolvers not
+// present in the retry results keep their original entries.
+func mergeProbeResults(original, retry []multisession.ProbeResult) []multisession.ProbeResult {
+	if len(retry) == 0 {
+		return original
+	}
+	byIP := make(map[string]int, len(original))
+	for i, r := range original {
+		if _, ok := byIP[r.Resolver]; !ok {
+			byIP[r.Resolver] = i
+		}
+	}
+	merged := make([]multisession.ProbeResult, len(original))
+	copy(merged, original)
+	for _, r := range retry {
+		if idx, ok := byIP[r.Resolver]; ok {
+			merged[idx] = r
+		}
+	}
+	return merged
+}
+
+func countValidProbeResults(results []multisession.ProbeResult) int {
+	n := 0
+	for _, r := range results {
+		if r.Valid {
+			n++
+		}
+	}
+	return n
+}
+
+// retryFailedProbeResults re-probes resolvers that failed the first probe
+// pass, once, after a short cooldown. It returns the merged results.
+// If the failure count is below the retry threshold, the context is
+// cancelled, or the retry probe fails, it returns the original results
+// unchanged (startup proceeds with the first-pass pool).
+func retryFailedProbeResults(ctx context.Context, configPath string, overrides config.ClientConfigOverrides, results []multisession.ProbeResult, log *logger.Logger) []multisession.ProbeResult {
+	total := len(results)
+	if total == 0 {
+		return results
+	}
+	var failed []config.ResolverAddress
+	for _, r := range results {
+		if !r.Valid {
+			failed = append(failed, config.ResolverAddress{IP: r.Resolver, Port: r.Port})
+		}
+	}
+	if len(failed) == 0 {
+		return results
+	}
+	// Gate: only retry when a significant share failed. A handful of
+	// failures is normal; the retry is for a degraded probe pass.
+	if float64(len(failed)) < startupRetryMinFailedFrac*float64(total) {
+		if log != nil {
+			log.Infof("Probe pass: %d/%d resolvers failed (below retry threshold); skipping reserve retry pass", len(failed), total)
+		}
+		return results
+	}
+	if log != nil {
+		log.Warnf("Probe pass: %d/%d resolvers failed (%.0f%%); waiting %v then re-probing the failed resolvers once", len(failed), total, 100*float64(len(failed))/float64(total), startupRetryCooldown)
+	}
+	// Cooldown: let a transient rate-limit burst end. Respect shutdown.
+	select {
+	case <-ctx.Done():
+		return results
+	case <-time.After(startupRetryCooldown):
+	}
+	// Build a retry client with ONLY the failed resolvers. Bootstrap
+	// (not the cache fast-start path) runs the full binary-search probe
+	// on just these resolvers — they have no measured capacity yet.
+	retryOverrides := overrides
+	retryOverrides.Resolvers = failed
+	retryClient, err := client.Bootstrap(configPath, retryOverrides)
+	if err != nil {
+		if log != nil {
+			log.Warnf("Reserve retry pass: retry client failed: %v; proceeding with first-pass results", err)
+		}
+		return results
+	}
+	retryCtx, cancelRetry := context.WithCancel(ctx)
+	defer cancelRetry()
+	if err := retryClient.RunInitialMTUTests(retryCtx); err != nil {
+		if log != nil {
+			log.Warnf("Reserve retry pass: retry probe failed: %v; proceeding with first-pass results", err)
+		}
+		return results
+	}
+	retryResults := retryClient.ProbeResults()
+	cancelRetry()
+	recovered := 0
+	for _, r := range retryResults {
+		if r.Valid {
+			recovered++
+		}
+	}
+	if log != nil {
+		log.Infof("Reserve retry pass: %d/%d failed resolvers recovered; pool now %d valid", recovered, len(failed), countValidProbeResults(mergeProbeResults(results, retryResults)))
+	}
+	return mergeProbeResults(results, retryResults)
+}
+
 // runMultiSession probes, clusters, starts one session per capacity
 // class, and fans accepted forward-range connections out to the classes.
 func runMultiSession(ctx context.Context, configPath string, overrides config.ClientConfigOverrides, cfg config.ClientConfig) error {
@@ -252,6 +374,11 @@ func runMultiSession(ctx context.Context, configPath string, overrides config.Cl
 		return fmt.Errorf("probe pass failed: %w", err)
 	}
 	results := probeClient.ProbeResults()
+	// Startup reserve retry pass (§8.4 option 2): if a significant share
+	// of the fleet failed the first probe (e.g. the fleet was
+	// rate-limited), give the failed resolvers one more chance after a
+	// short cooldown before clustering strands them as reserves.
+	results = retryFailedProbeResults(probeCtx, configPath, overrides, results, log)
 	cancelProbe()
 	log.Infof("\U0001F4E1 <cyan>Probe pass: <green>%d resolvers measured</green></cyan>", len(results))
 
