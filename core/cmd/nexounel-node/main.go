@@ -537,10 +537,27 @@ type coordinator struct {
 	log     *logger.Logger
 }
 
+// forwardListenerBindBackoff is the retry budget for a single forward-range
+// port that fails to bind with EADDRINUSE. A transient out-of-process holder
+// can grab a port at any point during the ~8 min probe window (§14: the node
+// holds no forward ports until bind time), and a retry converts a ~17-min
+// outage + full re-probe into a delay of seconds. The holder is transient by
+// construction of the failure mode; if it stays held after the budget, the
+// node still fails as before. Total delay across the schedule is ~60 s.
+// Package-level so tests can shrink it.
+var forwardListenerBindBackoff = []time.Duration{
+	time.Second,
+	2 * time.Second,
+	4 * time.Second,
+	8 * time.Second,
+	16 * time.Second,
+	29 * time.Second,
+}
+
 func (c *coordinator) listen(ctx context.Context, ip string, lo, hi int) ([]net.Listener, error) {
 	var listeners []net.Listener
 	for port := lo; port <= hi; port++ {
-		l, err := net.Listen("tcp", net.JoinHostPort(ip, fmt.Sprintf("%d", port)))
+		l, err := c.bindWithRetry(ctx, ip, port)
 		if err != nil {
 			for _, open := range listeners {
 				_ = open.Close()
@@ -551,6 +568,34 @@ func (c *coordinator) listen(ctx context.Context, ip string, lo, hi int) ([]net.
 		go c.serve(ctx, l)
 	}
 	return listeners, nil
+}
+
+// bindWithRetry binds one forward-range port, retrying with backoff while the
+// port is held by a transient out-of-process holder (EADDRINUSE). Other
+// errors fail immediately, and a port that stays held after the budget fails
+// as before. Already-bound listeners are the caller's to keep; this function
+// only ever returns the one listener it bound (or an error).
+func (c *coordinator) bindWithRetry(ctx context.Context, ip string, port int) (net.Listener, error) {
+	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+	l, err := net.Listen("tcp", addr)
+	if err == nil || !errors.Is(err, syscall.EADDRINUSE) {
+		return l, err
+	}
+	for i, delay := range forwardListenerBindBackoff {
+		if c.log != nil {
+			c.log.Warnf("<yellow>Forward listener %s in use, retrying in %s (attempt %d/%d)</yellow>", addr, delay, i+1, len(forwardListenerBindBackoff))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		l, err = net.Listen("tcp", addr)
+		if err == nil || !errors.Is(err, syscall.EADDRINUSE) {
+			return l, err
+		}
+	}
+	return nil, err
 }
 
 func (c *coordinator) serve(ctx context.Context, l net.Listener) {
