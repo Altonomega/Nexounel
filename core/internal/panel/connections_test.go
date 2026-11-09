@@ -209,7 +209,7 @@ func connectionsTestContent() connectionsContent {
 
 // TestConnectionsPageRenders guards the Connections page: live
 // sessions with ages, nodes with loss/capacity/forward ports,
-// server-wide throughput, cumulative totals, and the honest note
+// UDP-relay throughput, cumulative totals, and the honest note
 // that per-connection live throughput is not exposed — with no
 // inline <style> or <script> (the CSP blocks both).
 func TestConnectionsPageRenders(t *testing.T) {
@@ -220,15 +220,16 @@ func TestConnectionsPageRenders(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		"Connections",
-		"Live throughput",
+		"UDP relay",
 		"12.1 KB/s", "1.2 MB/s",
-		"server-wide",
+		"forwarded UDP payload",
 		"Active sessions", "2 active streams", "server up 2h 2m",
 		"UDP associations", "9 endpoints",
 		// The honest limitation note.
 		"Per-connection live throughput",
 		"not exposed by the server",
 		"control socket reports session membership only",
+		"TCP stream traffic", "UDP-relay rates",
 		// Sessions table with ages.
 		"Live sessions", "#266", "node-1", "103 B", "879 B",
 		"Age", "12m 3s", "4s ago",
@@ -239,9 +240,9 @@ func TestConnectionsPageRenders(t *testing.T) {
 		"Forward ports", "FORWARD_RANGE",
 		// Cumulative totals.
 		"Totals since server start",
-		"Data sent (upstream)", "1.1 GB",
-		"Data received (downstream)", "3.2 GB",
-		"Datagrams sent", "12400",
+		"UDP relay data sent (upstream)", "1.1 GB",
+		"UDP relay data received (downstream)", "3.2 GB",
+		"UDP relay datagrams sent", "12400",
 		"Dropped packets", "DNS upstream queries",
 		// Sidebar link to the page.
 		`href="/x/connections"`,
@@ -298,7 +299,7 @@ func TestConnectionsRouteEndToEnd(t *testing.T) {
 		t.Fatalf("GET /connections: status %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Connections", "Live throughput", "Per-connection live throughput", "No live sessions reported"} {
+	for _, want := range []string{"Connections", "UDP relay", "Per-connection live throughput", "No live sessions reported"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /connections missing %q", want)
 		}
@@ -330,7 +331,7 @@ func TestDashboardSessionsTableAges(t *testing.T) {
 	s.render(w, req, "status", PageData{Title: "Dashboard", WebPath: "/x", Authenticated: true, Username: "admin", CSRFToken: "t", Content: content})
 	body := w.Body.String()
 	for _, want := range []string{
-		"Live throughput", "&uarr; 12.1 KB/s", "&darr; 1.2 MB/s",
+		"UDP relay throughput", "&uarr; 12.1 KB/s", "&darr; 1.2 MB/s",
 		"<th>Age</th>", "12m 3s", "4s ago",
 		"969.1 KB/s", "1.0%",
 		"All connection details",

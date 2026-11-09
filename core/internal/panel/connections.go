@@ -86,15 +86,20 @@ func metricValue(details *HealthDetails, name string) (uint64, bool) {
 	return 0, false
 }
 
-// ThroughputView is the server-wide live throughput, derived from
-// the metrics endpoint's cumulative generic-UDP byte counters
-// between two page loads. OK is false on the first load (nothing
-// to compare with yet), when the counters are unavailable, or when
-// the counters reset (server restart) — the page then shows "—"
+// ThroughputView is the live throughput of the generic-UDP relay:
+// the payload bytes the server relays to/from UDP endpoints
+// (QUIC, calls, games, UDP forwarded through a forward port),
+// derived from the metrics endpoint's cumulative generic-UDP byte
+// counters between two page loads. It is NOT total tunnel
+// throughput: the server exposes no byte counter for TCP stream
+// traffic (the usual VLESS traffic), so that traffic is not
+// included. OK is false on the first load (nothing to compare
+// with yet), when the counters are unavailable, or when the
+// counters reset (server restart) — the page then shows "—"
 // and says to refresh, instead of showing a fabricated rate.
 // Per-connection live throughput is NOT available: the control
 // socket reports session membership only, and the metrics endpoint
-// reports server-wide counters.
+// reports these aggregate counters only.
 type ThroughputView struct {
 	OK       bool    `json:"ok"`
 	UpBps    float64 `json:"up_bps"`
@@ -128,7 +133,7 @@ func throughputRate(prev, cur throughputSample) (upBps, downBps float64, ok bool
 }
 
 // sampleThroughput records the current counters and returns the
-// live server-wide rate since the previous sample. The first call
+// live UDP-relay rate since the previous sample. The first call
 // (no previous sample) returns OK=false and only baselines: a rate
 // needs two page loads to exist.
 func (s *Server) sampleThroughput(details *HealthDetails) ThroughputView {
@@ -187,12 +192,12 @@ func countCounter(details *HealthDetails, name string) counterView {
 
 // connectionsContent is the Connections page: live connection
 // information for the admin — tunnel sessions with ages, nodes
-// with loss and bound forward ports, server-wide throughput and
+// with loss and bound forward ports, UDP-relay throughput and
 // cumulative counters. It is built only from data the panel
 // already loads (health/metrics, control-socket sessions, mesh
 // heartbeats) — nothing is invented, and what the backend cannot
-// provide (per-connection live throughput, the nodes' configured
-// port ranges) is said plainly on the page.
+// provide (per-connection live throughput, TCP stream bytes, the
+// nodes' configured port ranges) is said plainly on the page.
 type connectionsContent struct {
 	Health     ServerHealth
 	Throughput ThroughputView

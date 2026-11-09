@@ -267,13 +267,16 @@ metrics endpoint owns counters. `age` / `last_activity_ago` are
 relative ages ("12s", "3m 4s") computed at view time. The
 Connections page (`<secret-path>/connections`, same session
 authentication) shows the same sessions plus nodes, forward ports
-bound, server-wide live throughput, and cumulative totals; the
+bound, UDP-relay live throughput, and cumulative totals; the
 `throughput` object in `/api/status` carries that live rate
 (`ok: false` on the first load — a rate needs two samples — and
 after a server restart, when the counters reset). Per-connection
 live throughput is not exposed by the backend: the control socket
 reports membership only and the metrics endpoint reports
-server-wide counters, so the live rate is server-wide.
+aggregate counters, and the only byte counters it reports cover
+UDP-relayed traffic — so the live rate is the UDP-relay rate, not
+total tunnel throughput. TCP stream traffic (the usual VLESS
+traffic) has no byte counter on the server.
 
 ### `GET /api/compression`
 

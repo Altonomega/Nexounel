@@ -293,9 +293,9 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <div class="stat-sub">active tunnel sessions</div>
 </div>
 <div class="stat">
-<div class="stat-label">Live throughput</div>
+<div class="stat-label">UDP relay throughput</div>
 <div class="stat-value">{{if .Content.Throughput.OK}}&uarr; {{.Content.Throughput.UpRate}}{{else}}&mdash;{{end}}</div>
-<div class="stat-sub">{{if .Content.Throughput.OK}}&darr; {{.Content.Throughput.DownRate}} &middot; server-wide{{else}}refresh the page to measure{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}&darr; {{.Content.Throughput.DownRate}} &middot; UDP payload only{{else}}refresh the page to measure{{end}}</div>
 </div>
 <div class="stat">
 <div class="stat-label">Mesh chief</div>
@@ -656,17 +656,17 @@ const messageTemplate = `{{define "content"}}<h2>{{.Content.Heading}}</h2>
 // (per-connection live throughput, the nodes' configured port
 // ranges) instead of leaving the admin to guess.
 const connectionsTemplate = `{{define "content"}}<h2>Connections</h2>
-<p>Live connections on this server: tunnel sessions, nodes, forward ports, and server-wide throughput. The tunnel carries anonymous DNS traffic &mdash; there is no per-user client identity; connections are shown per node session.</p>
+<p>Live connections on this server: tunnel sessions, nodes, forward ports, and UDP-relay throughput. The tunnel carries anonymous DNS traffic &mdash; there is no per-user client identity; connections are shown per node session.</p>
 <div class="stats">
 <div class="stat">
-<div class="stat-label">Live throughput &uarr;</div>
+<div class="stat-label">UDP relay &uarr;</div>
 <div class="stat-value">{{if .Content.Throughput.OK}}{{.Content.Throughput.UpRate}}{{else}}&mdash;{{end}}</div>
-<div class="stat-sub">{{if .Content.Throughput.OK}}server-wide upload, since the last page load{{else}}refresh the page to measure{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}forwarded UDP payload, since the last page load{{else}}refresh the page to measure{{end}}</div>
 </div>
 <div class="stat">
-<div class="stat-label">Live throughput &darr;</div>
+<div class="stat-label">UDP relay &darr;</div>
 <div class="stat-value">{{if .Content.Throughput.OK}}{{.Content.Throughput.DownRate}}{{else}}&mdash;{{end}}</div>
-<div class="stat-sub">{{if .Content.Throughput.OK}}server-wide download, since the last page load{{else}}refresh the page to measure{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}forwarded UDP payload, since the last page load{{else}}refresh the page to measure{{end}}</div>
 </div>
 <div class="stat">
 <div class="stat-label">Active sessions</div>
@@ -679,7 +679,7 @@ const connectionsTemplate = `{{define "content"}}<h2>Connections</h2>
 <div class="stat-sub">active generic-UDP associations{{if .Content.Endpoints.OK}} &middot; {{.Content.Endpoints.Text}} endpoints{{end}}</div>
 </div>
 </div>
-<p class="muted">Per-connection live throughput (up/down per session) is not exposed by the server: the control socket reports session membership only, and the metrics endpoint reports server-wide counters. The live rates above are server-wide, computed from those counters between page loads; per-session traffic is shown as MTU and active streams below. Refresh the page to update the rates.</p>
+<p class="muted">Per-connection live throughput (up/down per session) is not exposed by the server: the control socket reports session membership only, and the metrics endpoint reports aggregate counters &mdash; and the only byte counters it reports cover UDP-relayed traffic. The live rates above are the UDP-relay rates, computed from those counters between page loads; TCP stream traffic (the usual VLESS traffic) has no byte counter on the server, so it is not included. Refresh the page to update the rates.</p>
 {{if .Content.SessionsNote}}<p class="warn">{{.Content.SessionsNote}}</p>{{end}}
 <div class="card"><h3>Live sessions</h3>
 {{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Age</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>#{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}} B</td><td>{{.DownloadMTU}} B</td><td>{{.ActiveStreams}}</td><td>{{.Age}}</td><td>{{.LastActivityAgo}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}</div>
@@ -690,14 +690,14 @@ const connectionsTemplate = `{{define "content"}}<h2>Connections</h2>
 <p class="muted">Each node forwards a configured port range (FORWARD_RANGE in the node config) through the tunnel. The mother has no node config file, so the range itself is not shown here &mdash; the bound count per node above is what the server can observe.</p></div>
 <div class="card"><h3>Totals since server start</h3>
 {{if .Content.Health.Up}}<table><tr><th>Counter</th><th>Total</th></tr>
-<tr><td>Data sent (upstream)</td><td>{{if .Content.UpBytes.OK}}{{.Content.UpBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
-<tr><td>Data received (downstream)</td><td>{{if .Content.DownBytes.OK}}{{.Content.DownBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
-<tr><td>Datagrams sent</td><td>{{if .Content.UpDatagrams.OK}}{{.Content.UpDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
-<tr><td>Datagrams received</td><td>{{if .Content.DownDatagrams.OK}}{{.Content.DownDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>UDP relay data sent (upstream)</td><td>{{if .Content.UpBytes.OK}}{{.Content.UpBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>UDP relay data received (downstream)</td><td>{{if .Content.DownBytes.OK}}{{.Content.DownBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>UDP relay datagrams sent</td><td>{{if .Content.UpDatagrams.OK}}{{.Content.UpDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>UDP relay datagrams received</td><td>{{if .Content.DownDatagrams.OK}}{{.Content.DownDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
 <tr><td>Dropped packets</td><td>{{if .Content.DroppedPackets.OK}}{{.Content.DroppedPackets.Text}}{{else}}&mdash;{{end}}</td></tr>
 <tr><td>DNS upstream queries</td><td>{{if .Content.UpstreamQueries.OK}}{{.Content.UpstreamQueries.Text}}{{else}}&mdash;{{end}}</td></tr>
 <tr><td>DNS upstream failures</td><td>{{if .Content.UpstreamFailures.OK}}{{.Content.UpstreamFailures.Text}}{{else}}&mdash;{{end}}</td></tr></table>
-<p class="muted">Cumulative counters since the server started &mdash; not live rates. The live rates at the top of this page are computed from the byte counters between page loads.</p>{{else}}<p>Server totals unavailable: the metrics endpoint is unreachable{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}.</p>{{end}}</div>
+<p class="muted">Cumulative generic-UDP relay counters since the server started &mdash; not live rates, and not total tunnel traffic: TCP stream traffic has no byte counter on the server. The live UDP-relay rates at the top of this page are computed from the byte counters between page loads.</p>{{else}}<p>Server totals unavailable: the metrics endpoint is unreachable{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}.</p>{{end}}</div>
 {{end}}`
 
 var pageTemplates = map[string]string{

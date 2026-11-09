@@ -156,7 +156,7 @@ type apiStatus struct {
 	Resolver      apiResolver   `json:"resolver"`
 	Sessions      []SessionView `json:"sessions"`
 	SessionsNote  string        `json:"sessions_note,omitempty"`
-	// Throughput is the server-wide live rate derived from the
+	// Throughput is the live UDP-relay rate derived from the
 	// metrics counters between page loads (see connections.go);
 	// ok is false on the first load.
 	Throughput    ThroughputView     `json:"throughput"`

@@ -393,7 +393,7 @@ type statusContent struct {
 	Control      ControlSocketState
 	Sessions     []SessionView
 	SessionsNote string
-	// Throughput is the server-wide live rate derived from the
+	// Throughput is the live UDP-relay rate derived from the
 	// metrics counters between page loads (see connections.go).
 	Throughput   ThroughputView
 	Compression  CompressionStatus
