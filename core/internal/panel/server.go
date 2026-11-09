@@ -42,6 +42,14 @@ type Server struct {
 	restartResult string
 	manualRestart string
 
+	// Throughput sampler: the previous snapshot of the server's
+	// cumulative generic-UDP byte counters, for the live
+	// server-wide rate shown on the dashboard and the Connections
+	// page. The rate is derived from two page loads, never
+	// fabricated; throughputMu guards the sample.
+	throughputMu   sync.Mutex
+	lastThroughput *throughputSample
+
 	// Overridable seams for tests.
 	dnsResolver    DNSResolver
 	cloudflareBase string
@@ -142,6 +150,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(http.HandlerFunc(s.handleLogout)).ServeHTTP(w, r)
 	case "/status":
 		s.requireAuth(http.HandlerFunc(s.handleStatus)).ServeHTTP(w, r)
+	case "/connections":
+		s.requireAuth(http.HandlerFunc(s.handleConnections)).ServeHTTP(w, r)
 	case "/restart-server":
 		s.requireAuth(http.HandlerFunc(s.handleRestartServer)).ServeHTTP(w, r)
 	case "/compression":
@@ -383,6 +393,9 @@ type statusContent struct {
 	Control      ControlSocketState
 	Sessions     []SessionView
 	SessionsNote string
+	// Throughput is the server-wide live rate derived from the
+	// metrics counters between page loads (see connections.go).
+	Throughput   ThroughputView
 	Compression  CompressionStatus
 	ConfigFiles  ConfigFileState
 	Mesh         MeshView
@@ -423,6 +436,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data := s.pageData(r, sess, "Dashboard")
 	data.Content = content
 	s.render(w, r, "status", data)
+}
+
+// handleConnections renders the Connections page: live sessions,
+// nodes, forward ports, server-wide throughput and cumulative
+// counters (see connections.go). GET only, same session
+// authentication as the dashboard.
+func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	sess := s.sessionFromRequest(r)
+	content := s.loadConnections(r.Context())
+	data := s.pageData(r, sess, "Connections")
+	data.Content = content
+	s.render(w, r, "connections", data)
 }
 
 // renderDashboard renders the dashboard with caller-supplied content

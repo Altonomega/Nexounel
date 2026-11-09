@@ -302,7 +302,7 @@ func TestDashboardRendersSocketAbsentAndFake(t *testing.T) {
 	}
 	for _, want := range []string{
 		controlSocketNotConfiguredNote, "Live sessions", "Compression",
-		"Dashboard", "Setup wizard", "Nodes", "Logs", "Jobs",
+		"Dashboard", "Connections", "Setup wizard", "Nodes", "Logs", "Jobs",
 		"Dictionary version", "node-1",
 	} {
 		if !strings.Contains(body, want) {

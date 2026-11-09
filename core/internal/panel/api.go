@@ -150,12 +150,16 @@ func apiResolverFrom(r ResolverHealth) apiResolver {
 }
 
 type apiStatus struct {
-	Server        apiHealth          `json:"server"`
-	Nodes         []apiNodeView      `json:"nodes"`
-	RegistryError string             `json:"registry_error,omitempty"`
-	Resolver      apiResolver        `json:"resolver"`
-	Sessions      []SessionView      `json:"sessions"`
-	SessionsNote  string             `json:"sessions_note,omitempty"`
+	Server        apiHealth     `json:"server"`
+	Nodes         []apiNodeView `json:"nodes"`
+	RegistryError string        `json:"registry_error,omitempty"`
+	Resolver      apiResolver   `json:"resolver"`
+	Sessions      []SessionView `json:"sessions"`
+	SessionsNote  string        `json:"sessions_note,omitempty"`
+	// Throughput is the server-wide live rate derived from the
+	// metrics counters between page loads (see connections.go);
+	// ok is false on the first load.
+	Throughput    ThroughputView     `json:"throughput"`
 	Control       ControlSocketState `json:"control"`
 	Compression   CompressionStatus  `json:"compression"`
 	ConfigFiles   ConfigFileState    `json:"config_files"`
@@ -180,6 +184,7 @@ func (s *Server) apiStatusFrom(ctxContent statusContent) apiStatus {
 		Resolver:      apiResolverFrom(ctxContent.Resolver),
 		Sessions:      sessions,
 		SessionsNote:  ctxContent.SessionsNote,
+		Throughput:    ctxContent.Throughput,
 		Control:       ctxContent.Control,
 		Compression:   ctxContent.Compression,
 		ConfigFiles:   ctxContent.ConfigFiles,

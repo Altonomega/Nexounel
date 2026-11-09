@@ -209,8 +209,11 @@ The whole dashboard as JSON. Fields:
   },
   "sessions": [{"session_id": 7, "node_id": "node-1", "upload_mtu": 110,
                 "download_mtu": 1015, "created_at": "2026-11-03T06:00:00Z",
-                "last_activity": "2026-11-03T06:01:00Z", "active_streams": 2}],
+                "last_activity": "2026-11-03T06:01:00Z", "active_streams": 2,
+                "age": "1m 5s", "last_activity_ago": "5s"}],
   "sessions_note": "",
+  "throughput": {"ok": true, "up_bps": 12345, "down_bps": 1234567,
+                 "up_rate": "12.1 KB/s", "down_rate": "1.2 MB/s"},
   "control": {"configured": true, "reachable": true, "available": true},
   "compression": { "...": "see /api/compression ..." },
   "config_files": {
@@ -250,7 +253,8 @@ Response:
 {
   "sessions": [{"session_id": 7, "node_id": "node-1", "upload_mtu": 110,
                 "download_mtu": 1015, "created_at": "2026-11-03T06:00:00Z",
-                "last_activity": "2026-11-03T06:01:00Z", "active_streams": 2}],
+                "last_activity": "2026-11-03T06:01:00Z", "active_streams": 2,
+                "age": "1m 5s", "last_activity_ago": "5s"}],
   "control": {"configured": true, "reachable": true, "available": true},
   "note": ""
 }
@@ -259,7 +263,17 @@ Response:
 `note` is set (and `sessions` is empty) when the socket is not
 configured or unreachable — see "Degraded states". Byte counters are
 deliberately absent: this endpoint reports session membership; the
-metrics endpoint owns counters.
+metrics endpoint owns counters. `age` / `last_activity_ago` are
+relative ages ("12s", "3m 4s") computed at view time. The
+Connections page (`<secret-path>/connections`, same session
+authentication) shows the same sessions plus nodes, forward ports
+bound, server-wide live throughput, and cumulative totals; the
+`throughput` object in `/api/status` carries that live rate
+(`ok: false` on the first load — a rate needs two samples — and
+after a server restart, when the counters reset). Per-connection
+live throughput is not exposed by the backend: the control socket
+reports membership only and the metrics endpoint reports
+server-wide counters, so the live rate is server-wide.
 
 ### `GET /api/compression`
 
@@ -457,7 +471,8 @@ states": check `available` before reading `members`).
     "generated_at": "2026-11-03T12:00:00Z",
     "members": [{
       "id": "node-1", "state": "ACTIVE",
-      "capacity_bps": 1100, "weight": 0.6, "loss": 0.01,
+      "capacity_bps": 1100, "capacity_rate": "1.1 KB/s",
+      "weight": 0.6, "loss": 0.01, "loss_percent": 1,
       "leg_rtt_ms": 12, "leg_ok": true, "tenure_seq": 1,
       "last_seen": "2026-11-03T11:59:55Z", "last_seen_ago_seconds": 5,
       "active_streams": 3, "forward_ports_bound": 10,

@@ -136,15 +136,19 @@ func (s *Server) controlSocketState(ctx context.Context) ControlSocketState {
 
 // SessionView is one live session for display. Byte counters are
 // deliberately absent: the control socket reports membership, the
-// metrics endpoint owns counters.
+// metrics endpoint owns counters. Age and LastActivityAgo are
+// relative ages ("12s", "3m 4s"), computed at view time so the
+// admin reads them at a glance instead of parsing timestamps.
 type SessionView struct {
-	SessionID     uint16    `json:"session_id"`
-	NodeID        string    `json:"node_id"`
-	UploadMTU     uint16    `json:"upload_mtu"`
-	DownloadMTU   uint16    `json:"download_mtu"`
-	CreatedAt     time.Time `json:"created_at"`
-	LastActivity  time.Time `json:"last_activity"`
-	ActiveStreams int       `json:"active_streams"`
+	SessionID       uint16    `json:"session_id"`
+	NodeID          string    `json:"node_id"`
+	UploadMTU       uint16    `json:"upload_mtu"`
+	DownloadMTU     uint16    `json:"download_mtu"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastActivity    time.Time `json:"last_activity"`
+	ActiveStreams   int       `json:"active_streams"`
+	Age             string    `json:"age"`
+	LastActivityAgo string    `json:"last_activity_ago"`
 }
 
 func sessionViews(in []control.SessionSummary) []SessionView {
@@ -155,6 +159,7 @@ func sessionViews(in []control.SessionSummary) []SessionView {
 			UploadMTU: s.UploadMTU, DownloadMTU: s.DownloadMTU,
 			CreatedAt: s.CreatedAt, LastActivity: s.LastActivity,
 			ActiveStreams: s.ActiveStreams,
+			Age:           agoString(s.CreatedAt), LastActivityAgo: agoString(s.LastActivity),
 		})
 	}
 	return views
@@ -189,19 +194,24 @@ func (s *Server) liveSessions(ctx context.Context) ([]SessionView, ControlSocket
 // in place until the mother marks it SUSPECT/DOWN, which the State
 // field then reports.
 type MeshMemberView struct {
-	ID                 string         `json:"id"`
-	State              mesh.NodeState `json:"state"`
-	CapacityBps        float64        `json:"capacity_bps"`
-	Weight             float64        `json:"weight"`
-	Loss               float64        `json:"loss"`
-	LegRTTMs           float64        `json:"leg_rtt_ms"`
-	LegOK              bool           `json:"leg_ok"`
-	TenureSeq          uint64         `json:"tenure_seq"`
-	LastSeen           time.Time      `json:"last_seen"`
-	LastSeenAgoSeconds int64          `json:"last_seen_ago_seconds"`
-	ActiveStreams      int            `json:"active_streams"`
-	ForwardPortsBound  int            `json:"forward_ports_bound"`
-	ConfigVersion      uint64         `json:"config_version"`
+	ID          string         `json:"id"`
+	State       mesh.NodeState `json:"state"`
+	CapacityBps float64        `json:"capacity_bps"`
+	Weight      float64        `json:"weight"`
+	Loss        float64        `json:"loss"`
+	// LossPercent is Loss as a percent (Loss*100), precomputed so
+	// templates show "1.0%" instead of the raw fraction "0.010".
+	LossPercent float64 `json:"loss_percent"`
+	// CapacityRate is CapacityBps human-formatted ("968.1 KB/s").
+	CapacityRate       string    `json:"capacity_rate"`
+	LegRTTMs           float64   `json:"leg_rtt_ms"`
+	LegOK              bool      `json:"leg_ok"`
+	TenureSeq          uint64    `json:"tenure_seq"`
+	LastSeen           time.Time `json:"last_seen"`
+	LastSeenAgoSeconds int64     `json:"last_seen_ago_seconds"`
+	ActiveStreams      int       `json:"active_streams"`
+	ForwardPortsBound  int       `json:"forward_ports_bound"`
+	ConfigVersion      uint64    `json:"config_version"`
 	// ResolverUsable/ResolverRejected are the aggregate counts from
 	// the member's last heartbeat (the panel already fetches them
 	// via the control socket; they were simply not surfaced).
@@ -291,7 +301,13 @@ func meshViews(snap control.MeshSnapshot, state ControlSocketState) MeshView {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		view.Members = append(view.Members, *byID[id])
+		m := *byID[id]
+		// Display derivations, computed once here so every
+		// template (dashboard, topology, connections) shows the
+		// same formatted numbers.
+		m.LossPercent = m.Loss * 100
+		m.CapacityRate = formatRate(m.CapacityBps)
+		view.Members = append(view.Members, m)
 	}
 	return view
 }
@@ -619,6 +635,7 @@ func (s *Server) loadDashboard(ctx context.Context) statusContent {
 	content := statusContent{
 		Health: health, Nodes: nodes, Resolver: resolver,
 		Control: ctrl, Sessions: sessions,
+		Throughput:   s.sampleThroughput(health.Details),
 		Compression:  loadCompressionStatus(s.cfg.ServerConfig, s.cfg.NodeConfig),
 		ConfigFiles:  s.configFileState(),
 		Mesh:         meshView,

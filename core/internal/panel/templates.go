@@ -225,6 +225,7 @@ const layoutTemplate = `{{define "layout"}}<!DOCTYPE html>
 </div>
 <nav class="menu">
 <a href="{{.WebPath}}/status" class="{{if eq .Page "status"}}active{{end}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg><span>Dashboard</span></a>
+<a href="{{.WebPath}}/connections" class="{{if eq .Page "connections"}}active{{end}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h13l-3.5-3.5M20 17H7l3.5 3.5"/></svg><span>Connections</span></a>
 <a href="{{.WebPath}}/wizard" class="{{if eq .Page "wizard"}}active{{end}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Wizard</span></a>
 <a href="{{.WebPath}}/nodes" class="{{if eq .Page "nodes"}}active{{end}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><circle cx="7" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="1" fill="currentColor" stroke="none"/></svg><span>Nodes</span></a>
 <a href="{{.WebPath}}/logs" class="{{if eq .Page "logs"}}active{{end}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg><span>Logs</span></a>
@@ -292,6 +293,11 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 <div class="stat-sub">active tunnel sessions</div>
 </div>
 <div class="stat">
+<div class="stat-label">Live throughput</div>
+<div class="stat-value">{{if .Content.Throughput.OK}}&uarr; {{.Content.Throughput.UpRate}}{{else}}&mdash;{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}&darr; {{.Content.Throughput.DownRate}} &middot; server-wide{{else}}refresh the page to measure{{end}}</div>
+</div>
+<div class="stat">
 <div class="stat-label">Mesh chief</div>
 <div class="stat-value">{{if .Content.Mesh.Available}}{{if .Content.Mesh.ChiefID}}{{.Content.Mesh.ChiefID}}{{else}}none{{end}}{{else}}&mdash;{{end}}</div>
 <div class="stat-sub">{{if .Content.Mesh.Available}}Term {{.Content.Mesh.Term}} &middot; table v{{.Content.Mesh.Version}}{{else}}Mesh unavailable{{end}}</div>
@@ -349,13 +355,14 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 </div>
 <div class="card"><h3>Live sessions</h3>
 {{if .Content.SessionsNote}}<p>{{.Content.SessionsNote}}</p>{{else}}
-{{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}}</td><td>{{.DownloadMTU}}</td><td>{{.ActiveStreams}}</td><td>{{.LastActivity}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}
+{{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Age</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>#{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}} B</td><td>{{.DownloadMTU}} B</td><td>{{.ActiveStreams}}</td><td>{{.Age}}</td><td>{{.LastActivityAgo}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}
+<p class="muted"><a href="{{.WebPath}}/connections">All connection details &rarr;</a></p>
 {{end}}</div>
 <div class="card"><h3>Mesh</h3>
 {{if .Content.Mesh.Available}}
 <p>Term: <strong>{{.Content.Mesh.Term}}</strong>{{if .Content.Mesh.TermDegraded}} (degraded){{end}} &middot; Table version: {{.Content.Mesh.Version}} &middot; Chief: <strong>{{if .Content.Mesh.ChiefID}}{{.Content.Mesh.ChiefID}}{{else}}none{{end}}</strong></p>
 <p class="muted">Snapshot signing: {{if .Content.Mesh.SnapshotSigning}}enabled{{else}}disabled &mdash; nodes cannot derive a degraded chief if the mother link drops{{end}} &middot; Generated at {{.Content.Mesh.GeneratedAt.Format "2006-01-02 15:04:05 MST"}}</p>
-{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Capacity (B/s)</th><th>Weight</th><th>Loss</th><th>Leg RTT (ms)</th><th>Leg</th><th>Streams</th><th>Forward ports</th><th>Config ver.</th><th>Control stream</th><th>Last heartbeat</th><th>Last ack</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.State}}</td><td>{{printf "%.0f" .CapacityBps}}</td><td>{{printf "%.3f" .Weight}}</td><td>{{printf "%.3f" .Loss}}</td><td>{{printf "%.1f" .LegRTTMs}}</td><td>{{if .LegOK}}<span class="badge badge-up"><span class="dot"></span>ok</span>{{else}}<span class="badge badge-down">down</span>{{end}}</td><td>{{.ActiveStreams}}</td><td>{{.ForwardPortsBound}}</td><td>{{.ConfigVersion}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td><td>{{if .LastAckFor}}{{.LastAckFor}}{{if .LastAckError}}: {{.LastAckError}}{{end}}{{else}}&mdash;{{end}}</td></tr>{{end}}</table>{{else}}<p>No members in the enforced table and no heartbeats recorded.</p>{{end}}
+{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Capacity</th><th>Weight</th><th>Loss</th><th>Leg RTT (ms)</th><th>Leg</th><th>Streams</th><th>Forward ports</th><th>Config ver.</th><th>Control stream</th><th>Last heartbeat</th><th>Last ack</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.State}}</td><td>{{.CapacityRate}}</td><td>{{printf "%.3f" .Weight}}</td><td>{{printf "%.1f%%" .LossPercent}}</td><td>{{printf "%.1f" .LegRTTMs}}</td><td>{{if .LegOK}}<span class="badge badge-up"><span class="dot"></span>ok</span>{{else}}<span class="badge badge-down">down</span>{{end}}</td><td>{{.ActiveStreams}}</td><td>{{.ForwardPortsBound}}</td><td>{{.ConfigVersion}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td><td>{{if .LastAckFor}}{{.LastAckFor}}{{if .LastAckError}}: {{.LastAckError}}{{end}}{{else}}&mdash;{{end}}</td></tr>{{end}}</table>{{else}}<p>No members in the enforced table and no heartbeats recorded.</p>{{end}}
 <p class="muted">Weights are capacity shares: zero means the member takes no new streams. A member shown SUSPECT or DOWN while its sessions still appear above means heartbeats stopped, not that the node is healthy.</p>
 {{else}}<p>{{.Content.Mesh.Note}}</p>{{end}}</div>
 <div class="card"><h3>Nodes</h3>
@@ -444,7 +451,7 @@ const statusTemplate = `{{define "content"}}<h2>Dashboard</h2>
 </form></div>
 </details>
 <div class="card"><h3>More</h3>
-<p><a href="{{.WebPath}}/wizard">Setup wizard</a> &middot; <a href="{{.WebPath}}/nodes">Nodes</a> &middot; <a href="{{.WebPath}}/logs">Logs</a> &middot; <a href="{{.WebPath}}/jobs">Jobs</a></p>
+<p><a href="{{.WebPath}}/connections">Connections</a> &middot; <a href="{{.WebPath}}/wizard">Setup wizard</a> &middot; <a href="{{.WebPath}}/nodes">Nodes</a> &middot; <a href="{{.WebPath}}/logs">Logs</a> &middot; <a href="{{.WebPath}}/jobs">Jobs</a></p>
 <p class="muted">The JSON agent API lives under the same secret path at /api/* and uses the same session authentication. See docs/PANEL-AGENT-API.md.</p></div>
 {{end}}`
 const logsTemplate = `{{define "content"}}<h2>Logs</h2>
@@ -458,12 +465,17 @@ const logsTemplate = `{{define "content"}}<h2>Logs</h2>
 {{end}}`
 
 const wizardTemplate = `{{define "content"}}<h2>Setup wizard</h2>
-<p>Create the DNS records that delegate a tunnel subdomain to this server, then register a node. The node key is shown once: copy it before confirming.</p>
+<p>This wizard does three things, in order:</p>
+<ol>
+<li><strong>DNS records</strong> &mdash; it creates two records at your DNS provider that delegate a tunnel subdomain (for example <code>v.example.com</code>) to this server, so DNS clients can reach the tunnel. Use the automatic Cloudflare path below, or create the records by hand at any provider.</li>
+<li><strong>Verification</strong> &mdash; it asks the public resolvers 8.8.8.8 and 1.1.1.1 whether the records are visible, so you know the delegation works before a node is registered.</li>
+<li><strong>Node registration</strong> &mdash; it creates a node entry and shows the node key once. Copy it before confirming; the key is never shown again.</li>
+</ol>
 {{if .Content.Errors}}<ul class="error">{{range .Content.Errors}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .Content.Results}}<div class="card"><h3>DNS verification</h3>
 <table><tr><th>Record</th><th>Name</th><th>Expected</th><th>Resolver</th><th>Result</th></tr>
 {{range .Content.Results}}<tr><td>{{.Record}}</td><td>{{.Name}}</td><td>{{.Expected}}</td><td>{{.Resolver}}</td><td>{{if .OK}}verified{{else}}not verified{{if .Error}} ({{.Error}}){{end}}{{end}}</td></tr>{{end}}</table>
-{{if .Content.Passed}}<p class="ok">Verification passed.</p>{{else}}<p class="error">Verification did not pass. Check the records and try again.</p>{{end}}</div>{{end}}
+{{if .Content.Passed}}<p class="ok">Verification passed. Both records are visible at the public resolvers &mdash; you can register the node.</p>{{else}}<p class="error">Verification did not pass. Most often this is propagation, not a wrong record: wait a few minutes and try again. If it still fails, check in your DNS provider's dashboard that both records exist with the exact names, values and TTL shown below, and that the A record is DNS-only (grey cloud, not proxied). A record that answers with a different value means another record with the same name already exists.</p>{{end}}</div>{{end}}
 {{if .Content.Pending}}<div class="card"><h3>Node deliverables (shown once)</h3>
 <p>Connect address: <code>{{.Content.Pending.ConnectAddress}}</code></p>
 <p>Node ID: <code>{{.Content.Pending.ID}}</code></p>
@@ -483,7 +495,11 @@ const wizardTemplate = `{{define "content"}}<h2>Setup wizard</h2>
 </form></div>
 {{else}}
 <div class="card"><h3>Manual records</h3>
-<p>Create these exact records at your DNS provider (DNS-only, no proxy), then verify.</p>
+<p>Create these two records at your DNS provider, with your own domain, subdomain and mother IP substituted. Both are <strong>DNS-only</strong> &mdash; never proxied (Cloudflare orange cloud off): a proxied record would route DNS through the provider's edge and the tunnel would not work. The panel never deletes or changes any existing record &mdash; it only asks you to add these two.</p>
+<table><tr><th>Type</th><th>Name</th><th>Value</th><th>TTL</th><th>What it does</th></tr>
+<tr><td>A</td><td>ns1.&lt;domain&gt;</td><td>&lt;mother IP&gt;</td><td>300 (5 min)</td><td>Points the nameserver name at this server. Without it, nothing can resolve the tunnel subdomain.</td></tr>
+<tr><td>NS</td><td>&lt;subdomain&gt;.&lt;domain&gt;</td><td>ns1.&lt;domain&gt;</td><td>300 (5 min)</td><td>Delegates the tunnel subdomain to this server.</td></tr></table>
+<p>After creating the records, press <strong>Verify records</strong>. Verification queries the public resolvers 8.8.8.8 and 1.1.1.1: the A record must answer with your mother IP, and the NS record must answer with <code>ns1.&lt;domain&gt;</code>. DNS changes can take a few minutes to appear &mdash; if verification fails, wait and try again before changing anything.</p>
 <form method="post" action="{{.WebPath}}/wizard">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <input type="hidden" name="action" value="verify-manual">
@@ -502,7 +518,9 @@ const wizardTemplate = `{{define "content"}}<h2>Setup wizard</h2>
 <p><button type="submit">Verify records</button></p>
 </form></div>
 <div class="card"><h3>Automatic (Cloudflare)</h3>
-<p>Enter a Cloudflare Global API key (with email) or a scoped API token. It is used only for this run and is never stored.</p>
+<p>Cloudflare creates the same two records for you: A <code>ns1.&lt;domain&gt;</code> &rarr; mother IP, TTL 300, DNS-only; NS <code>&lt;subdomain&gt;.&lt;domain&gt;</code> &rarr; <code>ns1.&lt;domain&gt;</code>, TTL 300, DNS-only. The panel never deletes or changes any existing record &mdash; it only adds these two.</p>
+<p>Credential: use a <strong>scoped API token limited to Zone:DNS:Edit on this single zone</strong> (preferred), or a Global API key with your account email. The credential is used only for this run and is never stored &mdash; after the run, revoke it if you no longer need it (the panel reminds you on the confirmation screen).</p>
+<p>What to expect: after you submit, the panel creates the two records, then verifies them against 8.8.8.8 and 1.1.1.1. If creation succeeds but verification fails, the records are usually still propagating &mdash; wait a few minutes and press Verify again; do not create the records a second time.</p>
 <form method="post" action="{{.WebPath}}/wizard">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <input type="hidden" name="action" value="create-auto">
@@ -631,15 +649,67 @@ const messageTemplate = `{{define "content"}}<h2>{{.Content.Heading}}</h2>
 <p>{{.Content.Body}}</p>
 {{if .Content.Link}}<p><a href="{{.Content.Link}}">{{.Content.LinkText}}</a></p>{{end}}{{end}}`
 
+// connectionsTemplate is the Connections page: live connection
+// information for the admin — sessions with ages, nodes with loss
+// and bound forward ports, server-wide throughput and cumulative
+// counters. It says plainly what the backend cannot provide
+// (per-connection live throughput, the nodes' configured port
+// ranges) instead of leaving the admin to guess.
+const connectionsTemplate = `{{define "content"}}<h2>Connections</h2>
+<p>Live connections on this server: tunnel sessions, nodes, forward ports, and server-wide throughput. The tunnel carries anonymous DNS traffic &mdash; there is no per-user client identity; connections are shown per node session.</p>
+<div class="stats">
+<div class="stat">
+<div class="stat-label">Live throughput &uarr;</div>
+<div class="stat-value">{{if .Content.Throughput.OK}}{{.Content.Throughput.UpRate}}{{else}}&mdash;{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}server-wide upload, since the last page load{{else}}refresh the page to measure{{end}}</div>
+</div>
+<div class="stat">
+<div class="stat-label">Live throughput &darr;</div>
+<div class="stat-value">{{if .Content.Throughput.OK}}{{.Content.Throughput.DownRate}}{{else}}&mdash;{{end}}</div>
+<div class="stat-sub">{{if .Content.Throughput.OK}}server-wide download, since the last page load{{else}}refresh the page to measure{{end}}</div>
+</div>
+<div class="stat">
+<div class="stat-label">Active sessions</div>
+<div class="stat-value">{{len .Content.Sessions}}</div>
+<div class="stat-sub">{{.Content.TotalStreams}} active streams{{if .Content.Uptime}} &middot; server up {{.Content.Uptime}}{{end}}</div>
+</div>
+<div class="stat">
+<div class="stat-label">UDP associations</div>
+<div class="stat-value">{{if .Content.Associations.OK}}{{.Content.Associations.Text}}{{else}}&mdash;{{end}}</div>
+<div class="stat-sub">active generic-UDP associations{{if .Content.Endpoints.OK}} &middot; {{.Content.Endpoints.Text}} endpoints{{end}}</div>
+</div>
+</div>
+<p class="muted">Per-connection live throughput (up/down per session) is not exposed by the server: the control socket reports session membership only, and the metrics endpoint reports server-wide counters. The live rates above are server-wide, computed from those counters between page loads; per-session traffic is shown as MTU and active streams below. Refresh the page to update the rates.</p>
+{{if .Content.SessionsNote}}<p class="warn">{{.Content.SessionsNote}}</p>{{end}}
+<div class="card"><h3>Live sessions</h3>
+{{if .Content.Sessions}}<table><tr><th>Session</th><th>Node</th><th>Upload MTU</th><th>Download MTU</th><th>Active streams</th><th>Age</th><th>Last activity</th></tr>{{range .Content.Sessions}}<tr><td>#{{.SessionID}}</td><td>{{.NodeID}}</td><td>{{.UploadMTU}} B</td><td>{{.DownloadMTU}} B</td><td>{{.ActiveStreams}}</td><td>{{.Age}}</td><td>{{.LastActivityAgo}}</td></tr>{{end}}</table>{{else}}<p>No live sessions reported by the control socket.</p>{{end}}</div>
+<div class="card"><h3>Nodes</h3>
+{{if .Content.Mesh.Available}}{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>State</th><th>Loss</th><th>Capacity</th><th>Resolvers usable</th><th>Resolvers rejected</th><th>Forward ports bound</th><th>Control stream</th><th>Last heartbeat</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}{{if eq .ID $.Content.Mesh.ChiefID}} (chief){{end}}</td><td>{{.State}}</td><td>{{printf "%.1f%%" .LossPercent}}</td><td>{{.CapacityRate}}</td><td>{{.ResolverUsable}}</td><td>{{.ResolverRejected}}</td><td>{{.ForwardPortsBound}}</td><td>{{if .StreamConnected}}connected{{else}}not connected{{end}}</td><td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05 MST"}} ({{.LastSeenAgoSeconds}}s ago){{end}}</td></tr>{{end}}</table>{{else}}<p>No nodes connected yet &mdash; <a href="{{.WebPath}}/wizard">add your first node with the Setup wizard</a>.</p>{{end}}{{else}}<p>Node status unavailable: {{.Content.Mesh.Note}}</p>{{end}}</div>
+<div class="card"><h3>Forward ports</h3>
+{{if .Content.Mesh.Available}}{{if .Content.Mesh.Members}}<table><tr><th>Node</th><th>Forward ports bound</th></tr>{{range .Content.Mesh.Members}}<tr><td>{{.ID}}</td><td>{{.ForwardPortsBound}}</td></tr>{{end}}</table>{{else}}<p>No nodes connected, so no forward ports are in use.</p>{{end}}{{else}}<p>Forward-port use is unavailable: {{.Content.Mesh.Note}}</p>{{end}}
+<p class="muted">Each node forwards a configured port range (FORWARD_RANGE in the node config) through the tunnel. The mother has no node config file, so the range itself is not shown here &mdash; the bound count per node above is what the server can observe.</p></div>
+<div class="card"><h3>Totals since server start</h3>
+{{if .Content.Health.Up}}<table><tr><th>Counter</th><th>Total</th></tr>
+<tr><td>Data sent (upstream)</td><td>{{if .Content.UpBytes.OK}}{{.Content.UpBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>Data received (downstream)</td><td>{{if .Content.DownBytes.OK}}{{.Content.DownBytes.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>Datagrams sent</td><td>{{if .Content.UpDatagrams.OK}}{{.Content.UpDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>Datagrams received</td><td>{{if .Content.DownDatagrams.OK}}{{.Content.DownDatagrams.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>Dropped packets</td><td>{{if .Content.DroppedPackets.OK}}{{.Content.DroppedPackets.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>DNS upstream queries</td><td>{{if .Content.UpstreamQueries.OK}}{{.Content.UpstreamQueries.Text}}{{else}}&mdash;{{end}}</td></tr>
+<tr><td>DNS upstream failures</td><td>{{if .Content.UpstreamFailures.OK}}{{.Content.UpstreamFailures.Text}}{{else}}&mdash;{{end}}</td></tr></table>
+<p class="muted">Cumulative counters since the server started &mdash; not live rates. The live rates at the top of this page are computed from the byte counters between page loads.</p>{{else}}<p>Server totals unavailable: the metrics endpoint is unreachable{{if .Content.Health.Error}} ({{.Content.Health.Error}}){{end}}.</p>{{end}}</div>
+{{end}}`
+
 var pageTemplates = map[string]string{
-	"login":   loginTemplate,
-	"status":  statusTemplate,
-	"logs":    logsTemplate,
-	"wizard":  wizardTemplate,
-	"nodes":   nodesTemplate,
-	"jobs":    jobsTemplate,
-	"job":     jobTemplate,
-	"message": messageTemplate,
+	"login":       loginTemplate,
+	"status":      statusTemplate,
+	"connections": connectionsTemplate,
+	"logs":        logsTemplate,
+	"wizard":      wizardTemplate,
+	"nodes":       nodesTemplate,
+	"jobs":        jobsTemplate,
+	"job":         jobTemplate,
+	"message":     messageTemplate,
 }
 
 // PageData is the data passed to every page template.

@@ -158,7 +158,7 @@ func TestHTTP404OutsideSecretPath(t *testing.T) {
 
 func TestHTTPAuthRequiredOnEveryRoute(t *testing.T) {
 	env := newTestEnv(t)
-	paths := []string{"/status", "/logs", "/wizard", "/nodes", "/jobs"}
+	paths := []string{"/status", "/connections", "/logs", "/wizard", "/nodes", "/jobs"}
 	for _, p := range paths {
 		rec := env.do(http.MethodGet, env.cfg.WebPath+p, nil, nil)
 		if rec.Code != http.StatusFound || !strings.HasSuffix(rec.Header().Get("Location"), "/login") {
